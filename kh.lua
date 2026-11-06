@@ -1,6 +1,6 @@
---[[ Venice · Korblox + Headless + FPS + FOV + Sky · v8 evade-target
+--[[ Venice · Korblox + Headless + FPS + FOV + Sky + Acc · v9
      Z — меню
-     v8: цель по CameraSubject и имени, мульти-модель, без H/K/F ]]
+     v9: пресеты неба, аксессуары по ID (голова/тело/ноги) ]]
 
 if getgenv().VeniceCos then pcall(function() getgenv().VeniceCos:Destroy() end) end
 if getgenv().VeniceCosConns then
@@ -14,6 +14,7 @@ local UIS      = ref(game:GetService("UserInputService"))
 local TweenS   = ref(game:GetService("TweenService"))
 local Lighting = ref(game:GetService("Lighting"))
 local AssetS   = ref(game:GetService("AssetService"))
+local InsertS  = ref(game:GetService("InsertService"))
 local RunS     = ref(game:GetService("RunService"))
 local CAS      = ref(game:GetService("ContextActionService"))
 local WS       = ref(workspace)
@@ -407,7 +408,28 @@ local NIGHT = {
     Rt = "rbxassetid://159454287", Up = "rbxassetid://159454284",
 }
 
-local SKY = { mode = "off", stars = 800, fog = 600, clock = 1, tint = Color3.fromRGB(0, 0, 0) }
+local CLASSIC = {
+    Bk = "rbxasset://textures/sky/sky512_bk.tex", Dn = "rbxasset://textures/sky/sky512_dn.tex",
+    Ft = "rbxasset://textures/sky/sky512_ft.tex", Lf = "rbxasset://textures/sky/sky512_lf.tex",
+    Rt = "rbxasset://textures/sky/sky512_rt.tex", Up = "rbxasset://textures/sky/sky512_up.tex",
+}
+
+local SKY = { mode = "off", stars = 0, fog = 600, clock = 1, tint = Color3.fromRGB(0, 0, 0), ambient = Color3.fromRGB(0, 0, 0), outdoor = Color3.fromRGB(0, 0, 0), brightness = 1 }
+
+local PRESETS = {
+    night    = { set = NIGHT,   clock = 1,    stars = 800,  fog = 700,  tint = Color3.fromRGB(0, 0, 0),        ambient = Color3.fromRGB(12, 12, 20),   outdoor = Color3.fromRGB(20, 20, 32),   brightness = 1.0 },
+    space    = { set = NIGHT,   clock = 0,    stars = 3000, fog = 6000, tint = Color3.fromRGB(0, 0, 0),        ambient = Color3.fromRGB(0, 0, 0),      outdoor = Color3.fromRGB(10, 10, 18),   brightness = 0.4 },
+    sunset   = { set = NIGHT,   clock = 18.2, stars = 150,  fog = 1500, tint = Color3.fromRGB(60, 30, 24),     ambient = Color3.fromRGB(42, 22, 26),   outdoor = Color3.fromRGB(84, 46, 40),   brightness = 1.2 },
+    classic  = { set = CLASSIC, clock = 14,   stars = 0,    fog = 6000, tint = Color3.fromRGB(140, 170, 200),  brightness = 2.0 },
+    overcast = { set = CLASSIC, clock = 13,   stars = 0,    fog = 800,  tint = Color3.fromRGB(118, 122, 130),  ambient = Color3.fromRGB(70, 72, 78),   outdoor = Color3.fromRGB(92, 94, 100),  brightness = 1.4 },
+    dusk     = { set = CLASSIC, clock = 17.6, stars = 60,   fog = 1800, tint = Color3.fromRGB(70, 55, 80),     ambient = Color3.fromRGB(45, 38, 55),   outdoor = Color3.fromRGB(70, 55, 80),   brightness = 1.1 },
+    void     = { set = nil,     clock = 1,    stars = 0,    fog = 600,  tint = Color3.fromRGB(0, 0, 0),        ambient = Color3.fromRGB(0, 0, 0),      outdoor = Color3.fromRGB(0, 0, 0),      brightness = 0.6 },
+    inferno  = { set = nil,     clock = 17,   stars = 0,    fog = 420,  tint = Color3.fromRGB(72, 14, 8),      ambient = Color3.fromRGB(44, 12, 8),    outdoor = Color3.fromRGB(62, 20, 12),   brightness = 1.2 },
+    ice      = { set = nil,     clock = 10,   stars = 0,    fog = 520,  tint = Color3.fromRGB(150, 180, 205),  ambient = Color3.fromRGB(32, 42, 52),   outdoor = Color3.fromRGB(46, 62, 78),   brightness = 1.4 },
+    matrix   = { set = nil,     clock = 2,    stars = 0,    fog = 460,  tint = Color3.fromRGB(6, 42, 12),      ambient = Color3.fromRGB(4, 18, 6),     outdoor = Color3.fromRGB(8, 30, 10),    brightness = 0.9 },
+    blood    = { set = nil,     clock = 0,    stars = 0,    fog = 340,  tint = Color3.fromRGB(58, 6, 6),       ambient = Color3.fromRGB(30, 4, 4),     outdoor = Color3.fromRGB(44, 8, 8),     brightness = 0.8 },
+}
+
 local skySaved = nil
 local ourSky = nil
 
@@ -443,8 +465,9 @@ local function restoreLighting()
 end
 
 local function applySky(mode)
+    local p = PRESETS[mode]
     SKY.mode = mode
-    if mode == "off" then
+    if not p then
         restoreLighting()
         return
     end
@@ -456,56 +479,51 @@ local function applySky(mode)
     if gameSky and gameSky ~= skySaved.sky then pcall(function() gameSky.Parent = nil end) end
     if skySaved.sky then pcall(function() skySaved.sky.Parent = nil end) end
 
-    if mode == "void" then
-        Lighting.Ambient = Color3.new(0, 0, 0)
-        Lighting.OutdoorAmbient = Color3.new(0, 0, 0)
-        Lighting.Brightness = 0.6
-        Lighting.FogColor = SKY.tint
-        Lighting.FogStart = 0
-        Lighting.FogEnd = SKY.fog
-        Lighting.ClockTime = SKY.clock
-        return
+    SKY.stars = p.stars
+    SKY.fog = p.fog
+    SKY.clock = p.clock
+    SKY.tint = p.tint
+    SKY.ambient = p.ambient or skySaved.ambient
+    SKY.outdoor = p.outdoor or skySaved.outdoor
+    SKY.brightness = p.brightness or skySaved.brightness
+
+    if p.set then
+        ourSky = Instance.new("Sky")
+        ourSky.SkyboxBk = p.set.Bk
+        ourSky.SkyboxDn = p.set.Dn
+        ourSky.SkyboxFt = p.set.Ft
+        ourSky.SkyboxLf = p.set.Lf
+        ourSky.SkyboxRt = p.set.Rt
+        ourSky.SkyboxUp = p.set.Up
+        ourSky.StarCount = SKY.stars
+        ourSky.CelestialBodiesShown = true
+        ourSky.SunAngularSize = 11
+        ourSky.MoonAngularSize = 14
+        ourSky.Parent = Lighting
     end
 
-    ourSky = Instance.new("Sky")
-    ourSky.SkyboxBk = NIGHT.Bk
-    ourSky.SkyboxDn = NIGHT.Dn
-    ourSky.SkyboxFt = NIGHT.Ft
-    ourSky.SkyboxLf = NIGHT.Lf
-    ourSky.SkyboxRt = NIGHT.Rt
-    ourSky.SkyboxUp = NIGHT.Up
-    ourSky.StarCount = SKY.stars
-    ourSky.CelestialBodiesShown = true
-    ourSky.SunAngularSize = 11
-    ourSky.MoonAngularSize = 14
-    ourSky.Parent = Lighting
-
-    Lighting.ClockTime = mode == "space" and 0 or SKY.clock
-    Lighting.Ambient = mode == "space" and Color3.new(0, 0, 0) or skySaved.ambient
-    Lighting.OutdoorAmbient = mode == "space" and Color3.fromRGB(20, 20, 30) or skySaved.outdoor
+    Lighting.ClockTime = SKY.clock
+    Lighting.Ambient = SKY.ambient
+    Lighting.OutdoorAmbient = SKY.outdoor
+    Lighting.Brightness = SKY.brightness
     Lighting.FogColor = SKY.tint
     Lighting.FogStart = 0
     Lighting.FogEnd = SKY.fog
 end
 
 local function syncSky()
-    if SKY.mode == "off" then return end
-    if SKY.mode == "void" then
-        if ourSky then pcall(function() ourSky:Destroy() end) ourSky = nil end
-        local s = Lighting:FindFirstChildOfClass("Sky")
-        if s and s ~= (skySaved and skySaved.sky) then pcall(function() s.Parent = nil end) end
-        if Lighting.FogEnd ~= SKY.fog then Lighting.FogEnd = SKY.fog end
-        if Lighting.FogColor ~= SKY.tint then Lighting.FogColor = SKY.tint end
-        return
+    local p = PRESETS[SKY.mode]
+    if not p then return end
+    if p.set then
+        if not ourSky or not ourSky.Parent then
+            applySky(SKY.mode)
+            return
+        end
+        if ourSky.StarCount ~= SKY.stars then ourSky.StarCount = SKY.stars end
     end
-    local s = ourSky
-    if not s or not s.Parent then
-        applySky(SKY.mode)
-        return
-    end
-    if s.StarCount ~= SKY.stars then s.StarCount = SKY.stars end
     if Lighting.FogEnd ~= SKY.fog then Lighting.FogEnd = SKY.fog end
     if Lighting.FogColor ~= SKY.tint then Lighting.FogColor = SKY.tint end
+    if Lighting.Ambient ~= SKY.ambient then Lighting.Ambient = SKY.ambient end
 end
 
 track(Lighting.ChildAdded:Connect(function(d)
@@ -516,6 +534,101 @@ track(Lighting.ChildAdded:Connect(function(d)
         end)
     end
 end))
+
+-- ============================== аксессуары ==============================
+
+local ACC = { head = nil, body = nil, legs = nil }
+local accMade = { head = {}, body = {}, legs = {} }
+
+local function clearAcc(kind)
+    for _, o in ipairs(accMade[kind] or {}) do
+        if o and o.Parent then pcall(function() o:Destroy() end) end
+    end
+    accMade[kind] = {}
+end
+
+local function clearAllAcc()
+    for _, k in ipairs({ "head", "body", "legs" }) do
+        clearAcc(k)
+        ACC[k] = nil
+    end
+end
+
+local function anchorFor(char, kind)
+    if kind == "head" then return char:FindFirstChild("Head") end
+    if kind == "body" then return char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso") end
+    return char:FindFirstChild("RightUpperLeg") or char:FindFirstChild("Right Leg")
+end
+
+local function offsetFor(kind)
+    if kind == "head" then return Vector3.new(0, 1.1, 0) end
+    if kind == "body" then return Vector3.new(0, 0, 0.7) end
+    return Vector3.new(0, 0.2, 0.45)
+end
+
+local function fallbackPart(kind, anchor, id)
+    local p = Instance.new("Part")
+    p.Name = "VeniceAcc"
+    p.Size = Vector3.new(1, 1, 1)
+    p.Transparency = 0
+    p.Anchored = false
+    p.CanCollide = false
+    p.CanQuery = false
+    p.CanTouch = false
+    pcall(function() p.Massless = true end)
+    local sm = Instance.new("SpecialMesh", p)
+    sm.MeshType = Enum.MeshType.FileMesh
+    sm.MeshId = "rbxassetid://" .. id
+    p.CFrame = anchor.CFrame * CFrame.new(offsetFor(kind))
+    p.Parent = getFolder()
+    local w = Instance.new("WeldConstraint")
+    w.Part0 = p
+    w.Part1 = anchor
+    w.Parent = p
+    return p
+end
+
+local function attach(kind, idText)
+    local id = tonumber((tostring(idText):gsub("[^%d]", "")))
+    if not id then print("[Venice] нет id") return end
+    local char = targets()[1]
+    if not char then return end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not hum then return end
+    local anchor = anchorFor(char, kind)
+    if not anchor or not anchor:IsA("BasePart") then print("[Venice] нет точки крепления") return end
+
+    clearAcc(kind)
+    ACC[kind] = id
+
+    local ok, model = pcall(function() return InsertS:LoadAsset(id) end)
+    local done = false
+
+    if ok and model then
+        local acc = model:FindFirstChildWhichIsA("Accessory", true) or model:FindFirstChildWhichIsA("Hat", true)
+        if acc then
+            local copy = acc:Clone()
+            if pcall(function() hum:AddAccessory(copy) end) then
+                table.insert(accMade[kind], copy)
+                done = true
+            end
+        end
+    end
+
+    if not done then
+        local p = fallbackPart(kind, anchor, id)
+        table.insert(accMade[kind], p)
+    end
+
+    print("[Venice] аксессуар", kind, id, done and "(готовый)" or "(меш)")
+end
+
+local function reapplyAcc()
+    for _, k in ipairs({ "head", "body", "legs" }) do
+        accMade[k] = {}
+        if ACC[k] then pcall(attach, k, ACC[k]) end
+    end
+end
 
 -- ============================== фиксация ==============================
 
@@ -594,6 +707,11 @@ end
 if LP.Character then watchChar(LP.Character) end
 track(LP.CharacterAdded:Connect(watchChar))
 track(LP.CharacterAppearanceLoaded:Connect(enforce))
+
+track(LP.CharacterAdded:Connect(function()
+    task.wait(1.5)
+    pcall(reapplyAcc)
+end))
 
 track(WS.ChildAdded:Connect(function(m)
     if not m:IsA("Model") then return end
@@ -860,14 +978,19 @@ local function slider(text, min, max, default, cb, step)
     fill.Parent = bar
     Instance.new("UICorner", fill).CornerRadius = UDim.new(1, 0)
 
+    local function setVal(val, silent)
+        local rel = math.clamp((val - min) / (max - min), 0, 1)
+        v.Text = tostring(val)
+        fill.Size = UDim2.fromScale(rel, 1)
+        if not silent then pcall(cb, val) end
+    end
+
     local drag = false
     local function setX(x)
         local rel = math.clamp((x - bar.AbsolutePosition.X) / bar.AbsoluteSize.X, 0, 1)
         local raw = min + (max - min) * rel
         local val = step and (math.floor(raw / step + 0.5) * step) or math.floor(raw + 0.5)
-        v.Text = tostring(val)
-        fill.Size = UDim2.fromScale(rel, 1)
-        pcall(cb, val)
+        setVal(val)
     end
     track(bar.InputBegan:Connect(function(i)
         if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
@@ -885,6 +1008,49 @@ local function slider(text, min, max, default, cb, step)
             drag = false
         end
     end))
+
+    return function(val) setVal(val) end
+end
+
+local function idRow(placeholder, cb)
+    local r = Instance.new("Frame")
+    r.Size = UDim2.new(1, -8, 0, 30)
+    r.BackgroundColor3 = ROW
+    r.BorderSizePixel = 0
+    r.Parent = panel
+    Instance.new("UICorner", r).CornerRadius = UDim.new(0, 8)
+
+    local box = Instance.new("TextBox")
+    box.Size = UDim2.new(1, -46, 1, 0)
+    box.Position = UDim2.fromOffset(8, 0)
+    box.BackgroundTransparency = 1
+    box.Font = Enum.Font.GothamSemibold
+    box.TextSize = 11
+    box.TextColor3 = TEXT
+    box.PlaceholderText = placeholder
+    box.PlaceholderColor3 = SUB
+    box.TextXAlignment = Enum.TextXAlignment.Left
+    box.ClearTextOnFocus = false
+    box.Text = ""
+    box.Parent = r
+
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.fromOffset(38, 22)
+    btn.Position = UDim2.new(1, -42, 0.5, -11)
+    btn.BackgroundColor3 = OFF
+    btn.BorderSizePixel = 0
+    btn.Font = Enum.Font.GothamBold
+    btn.TextSize = 10
+    btn.TextColor3 = TEXT
+    btn.Text = "OK"
+    btn.Parent = r
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
+
+    local function fire()
+        if box.Text ~= "" then task.spawn(function() pcall(cb, box.Text) end) end
+    end
+    btn.MouseButton1Click:Connect(fire)
+    box.FocusLost:Connect(function(enter) if enter then fire() end end)
 end
 
 local function setOpen(force)
@@ -901,6 +1067,7 @@ local function setOpen(force)
 end
 
 local setHeadless, setKorblox, setForce, setBoost
+local setStars, setFog, setClock
 
 local function build()
     gui = Instance.new("ScreenGui")
@@ -979,6 +1146,12 @@ local function build()
         enforce()
     end, 26)
 
+    section("АКСЕССУАРЫ")
+    idRow("ID на голову", function(t) attach("head", t) end)
+    idRow("ID на тело", function(t) attach("body", t) end)
+    idRow("ID на ноги", function(t) attach("legs", t) end)
+    button("Снять аксессуары", function() clearAllAcc() end)
+
     section("КАМЕРА")
     slider("FOV", 40, 120, fovTarget, function(v)
         fovTarget = v
@@ -986,25 +1159,30 @@ local function build()
     end, 1)
 
     section("НЕБО")
-    button("Ночь", function() applySky("night") end)
-    button("Космос", function() applySky("space") end)
-    button("Пустота", function() applySky("void") end)
     button("Небо выкл", function() applySky("off") end)
-    slider("Звёзды", 0, 3000, SKY.stars, function(v)
+    button("Ночь", function() applySky("night") setStars(SKY.stars) setFog(SKY.fog) setClock(SKY.clock) end)
+    button("Космос", function() applySky("space") setStars(SKY.stars) setFog(SKY.fog) setClock(SKY.clock) end)
+    button("Закат", function() applySky("sunset") setStars(SKY.stars) setFog(SKY.fog) setClock(SKY.clock) end)
+    button("Сумерки", function() applySky("dusk") setStars(SKY.stars) setFog(SKY.fog) setClock(SKY.clock) end)
+    button("Классика", function() applySky("classic") setStars(SKY.stars) setFog(SKY.fog) setClock(SKY.clock) end)
+    button("Пасмурно", function() applySky("overcast") setStars(SKY.stars) setFog(SKY.fog) setClock(SKY.clock) end)
+    button("Пустота", function() applySky("void") setStars(SKY.stars) setFog(SKY.fog) setClock(SKY.clock) end)
+    button("Инферно", function() applySky("inferno") setStars(SKY.stars) setFog(SKY.fog) setClock(SKY.clock) end)
+    button("Лёд", function() applySky("ice") setStars(SKY.stars) setFog(SKY.fog) setClock(SKY.clock) end)
+    button("Матрица", function() applySky("matrix") setStars(SKY.stars) setFog(SKY.fog) setClock(SKY.clock) end)
+    button("Кровь", function() applySky("blood") setStars(SKY.stars) setFog(SKY.fog) setClock(SKY.clock) end)
+    setStars = slider("Звёзды", 0, 3000, 0, function(v)
         SKY.stars = v
         syncSky()
     end, 50)
-    slider("Туман", 50, 5000, SKY.fog, function(v)
+    setFog = slider("Туман", 50, 6000, 600, function(v)
         SKY.fog = v
         syncSky()
     end, 50)
-    slider("Время", 0, 24, SKY.clock, function(v)
+    setClock = slider("Время", 0, 24, 1, function(v)
         SKY.clock = v
-        if SKY.mode ~= "off" then applySky(SKY.mode) end
+        if SKY.mode ~= "off" then Lighting.ClockTime = v end
     end, 1)
-    button("Фон: чёрный", function() SKY.tint = Color3.fromRGB(0, 0, 0) syncSky() end)
-    button("Фон: синий", function() SKY.tint = Color3.fromRGB(10, 14, 40) syncSky() end)
-    button("Фон: серый", function() SKY.tint = Color3.fromRGB(60, 62, 70) syncSky() end)
 
     section("FPS")
     setBoost = row("FPS Boost", FPS.boost, function(v)
@@ -1077,6 +1255,7 @@ local function build()
             pcall(applyHeadless, c, false)
             pcall(clearKorblox, c)
         end
+        pcall(clearAllAcc)
         pcall(applySky, "off")
         fovTarget = 70
         pcall(applyFov)
@@ -1110,7 +1289,7 @@ local function build()
         end
     end)
 
-    print("[Venice] v8 · Z меню")
+    print("[Venice] v9 · Z меню")
 end
 
 build()
