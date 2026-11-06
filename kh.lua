@@ -18,7 +18,7 @@ while not LP do task.wait() end
 
 local function track(c) table.insert(getgenv().VeniceCosConns, c) return c end
 
-local CONFIG = { korblox = true, headless = true, force = true, speed = false }
+local CONFIG = { korblox = true, headless = true, force = true, speed = false, vel = true, infJump = false }
 local FPS = { boost = false, shadowsOff = false, fxOff = false, partsOff = false, cap = 240 }
 
 local speedTarget = 25
@@ -36,6 +36,38 @@ local SUB    = Color3.fromRGB(128, 128, 144)
 local OKC    = Color3.fromRGB(120, 220, 160)
 
 if setthreadidentity then pcall(setthreadidentity, 7) end
+
+-- ============================== хук walkspeed ==============================
+
+local nc = newcclosure or function(f) return f end
+
+if getgenv().VeniceOldNewIndex then
+    local mt0 = getrawmetatable and getrawmetatable(game)
+    if mt0 then
+        pcall(function()
+            setreadonly(mt0, false)
+            mt0.__newindex = getgenv().VeniceOldNewIndex
+            setreadonly(mt0, true)
+        end)
+    end
+    getgenv().VeniceOldNewIndex = nil
+end
+
+local hookedSpeed = false
+pcall(function()
+    local mt = getrawmetatable(game)
+    if not mt then return end
+    getgenv().VeniceOldNewIndex = mt.__newindex
+    setreadonly(mt, false)
+    mt.__newindex = nc(function(self, k, v)
+        if k == "WalkSpeed" and CONFIG.speed and typeof(self) == "Instance" and self.ClassName == "Humanoid" and self.Parent == LP.Character then
+            v = speedTarget
+        end
+        return getgenv().VeniceOldNewIndex(self, k, v)
+    end)
+    setreadonly(mt, true)
+    hookedSpeed = true
+end)
 
 local function stealthGui(g)
     local h = gethui and gethui()
@@ -410,6 +442,7 @@ local humHooked = setmetatable({}, { __mode = "k" })
 local speedGuard = false
 local humCache = {}
 local humAt = 0
+local lastJump = 0
 
 local function applySpeed(hum)
     if walkOrig[hum] == nil then walkOrig[hum] = hum.WalkSpeed end
@@ -439,6 +472,46 @@ local function hookHum(hum)
     end))
 end
 
+local function keyDir()
+    local cam = WS.CurrentCamera
+    if not cam then return Vector3.zero end
+    local look = cam.CFrame.LookVector
+    local right = cam.CFrame.RightVector
+    look = Vector3.new(look.X, 0, look.Z)
+    right = Vector3.new(right.X, 0, right.Z)
+    local d = Vector3.zero
+    if UIS:IsKeyDown(Enum.KeyCode.W) then d = d + look end
+    if UIS:IsKeyDown(Enum.KeyCode.S) then d = d - look end
+    if UIS:IsKeyDown(Enum.KeyCode.D) then d = d + right end
+    if UIS:IsKeyDown(Enum.KeyCode.A) then d = d - right end
+    if d.Magnitude > 0.01 then return d.Unit end
+    return Vector3.zero
+end
+
+local function velStep(hum)
+    local char = hum.Parent
+    if not char then return end
+    local root = hum.RootPart
+    if not root or root.Anchored then return end
+    if hum.Sit then return end
+    local st = hum:GetState()
+    if st == Enum.HumanoidStateType.Seated
+        or st == Enum.HumanoidStateType.PlatformStanding
+        or st == Enum.HumanoidStateType.Physics
+        or st == Enum.HumanoidStateType.Climbing then return end
+
+    local dir = hum.MoveDirection
+    if dir.Magnitude < 0.05 then dir = keyDir() end
+    if dir.Magnitude < 0.05 then return end
+    dir = dir.Unit
+
+    local v = root.AssemblyLinearVelocity
+    local horiz = Vector3.new(v.X, 0, v.Z)
+    local want = dir * speedTarget
+    local mix = horiz:Lerp(want, 0.35)
+    root.AssemblyLinearVelocity = Vector3.new(mix.X, v.Y, mix.Z)
+end
+
 local function refreshHums()
     humAt = os.clock()
     table.clear(humCache)
@@ -451,11 +524,44 @@ local function refreshHums()
     end
 end
 
+local function infJump()
+    if not CONFIG.infJump then return end
+    local now = os.clock()
+    if now - lastJump < 0.04 then return end
+    lastJump = now
+
+    local char = LP.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    if not hum or hum.Health <= 0 then return end
+    local root = hum.RootPart
+    if not root or root.Anchored then return end
+
+    pcall(function() hum:ChangeState(Enum.HumanoidStateType.Jumping) end)
+
+    local jp = hum.JumpPower
+    if not hum.UseJumpPower then
+        jp = math.sqrt(2 * WS.Gravity * hum.JumpHeight)
+    end
+    if jp and jp > 0 then
+        local v = root.AssemblyLinearVelocity
+        if v.Y < jp * 0.95 then
+            root.AssemblyLinearVelocity = Vector3.new(v.X, jp, v.Z)
+        end
+    end
+end
+
+track(UIS.JumpRequest:Connect(function() pcall(infJump) end))
+
 track(RunS.Stepped:Connect(function()
-    if not CONFIG.speed then return end
+    if not CONFIG.speed and not CONFIG.infJump then return end
     if os.clock() - humAt > 0.25 then refreshHums() end
     for _, hum in ipairs(humCache) do
-        if hum.Parent and hum.Health > 0 then applySpeed(hum) end
+        if hum.Parent and hum.Health > 0 then
+            if CONFIG.speed then
+                applySpeed(hum)
+                if CONFIG.vel and hum.Parent == LP.Character then velStep(hum) end
+            end
+        end
     end
 end))
 
@@ -976,7 +1082,7 @@ local function setOpen(force)
     end
 end
 
-local setHeadless, setKorblox, setForce, setBoost, setSpeed
+local setHeadless, setKorblox, setForce, setBoost, setSpeed, setVel, setInf
 
 local function build()
     gui = Instance.new("ScreenGui")
@@ -1071,7 +1177,10 @@ local function build()
             end
         end
     end)
-    slider("Скорость", 16, 60, speedTarget, function(v)
+    setVel = row("Импульс (velocity)", CONFIG.vel, function(v)
+        CONFIG.vel = v
+    end, 26)
+    slider("Скорость", 16, 80, speedTarget, function(v)
         speedTarget = v
         if CONFIG.speed then
             for _, hum in ipairs(humCache) do
@@ -1079,6 +1188,9 @@ local function build()
             end
         end
     end, 1)
+    setInf = row("Бесконечный прыжок", CONFIG.infJump, function(v)
+        CONFIG.infJump = v
+    end)
 
     section("КАМЕРА")
     slider("FOV", 40, 120, fovTarget, function(v)
@@ -1158,7 +1270,14 @@ local function build()
         print("[Venice] риг:", hum and hum.RigType.Name or "нет")
         print("[Venice] weld-режим:", tostring(weldMode))
         print("[Venice] CreateMeshPartAsync:", meshCache and "ок" or "недоступен")
-        print("[Venice] спидхак:", CONFIG.speed and ("вкл " .. speedTarget) or "выкл")
+        print("[Venice] хук WalkSpeed:", hookedSpeed and "есть" or "нет")
+        print("[Venice] спидхак:", CONFIG.speed and ("вкл " .. speedTarget) or "выкл", "импульс:", tostring(CONFIG.vel))
+        print("[Venice] инф.прыжок:", tostring(CONFIG.infJump))
+        if hum then
+            local root = hum.RootPart
+            print("[Venice] walk:", hum.WalkSpeed, "vel:", root and root.AssemblyLinearVelocity.Magnitude or "-")
+            print("[Venice] MoveDirection:", tostring(hum.MoveDirection))
+        end
         print("[Venice] FOV:", tostring(fovTarget), "небо:", SKY.mode)
         if char then
             for _, d in ipairs(char:GetChildren()) do
@@ -1168,13 +1287,14 @@ local function build()
     end)
     button("Убрать всё", function()
         CONFIG.headless, CONFIG.korblox, CONFIG.force = false, false, false
-        CONFIG.speed = false
+        CONFIG.speed, CONFIG.infJump = false, false
         FPS.boost, FPS.shadowsOff, FPS.fxOff, FPS.partsOff = false, false, false, false
         if setHeadless then setHeadless(false) end
         if setKorblox then setKorblox(false) end
         if setForce then setForce(false) end
         if setBoost then setBoost(false) end
         if setSpeed then setSpeed(false) end
+        if setInf then setInf(false) end
         syncFps()
         table.clear(humCache)
         for _, c in ipairs(targets()) do
@@ -1216,7 +1336,7 @@ local function build()
         end
     end)
 
-    print("[Venice] v13 · Z меню")
+    print("[Venice] v14 · Z меню")
 end
 
 build()
