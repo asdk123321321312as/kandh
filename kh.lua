@@ -18,11 +18,17 @@ while not LP do task.wait() end
 
 local function track(c) table.insert(getgenv().VeniceCosConns, c) return c end
 
-local CONFIG = { korblox = true, headless = true, force = true, hat = false, infJump = false, jumpLimit = 0 }
+local CONFIG = { korblox = true, headless = true, force = true, infJump = false, jumpLimit = 0 }
 local FPS = { boost = false, shadowsOff = false, fxOff = false, partsOff = false, cap = 240 }
 
-local HAT_ID = 132809431
-local hatOffsetY = 0
+local ACCS = {
+    { id = 132809431,  name = "Doomsekkar" },
+    { id = 74891470,   name = "Frozen Horns" },
+    { id = 215718515,  name = "Fiery Horns" },
+    { id = 1744060292, name = "Poisoned Horns" },
+}
+local accCurrent = 0
+local accOffsetY = 0
 
 local MESH = "rbxassetid://101851696"
 local TEX  = "rbxassetid://101851254"
@@ -186,14 +192,14 @@ local function applyHeadless(char, on)
     end
 end
 
--- ============================== шапка ==============================
+-- ============================== аксессуары ==============================
 
-local hatBusy = false
-local hatAt = 0
-local hatLast = "не запускалось"
-local hatTimer = nil
+local accBusy = false
+local accAt = 0
+local accLast = "не запускалось"
+local accTimer = nil
 
-local function hasHat()
+local function hasAcc()
     local char = LP.Character
     if not char then return false end
     for _, d in ipairs(char:GetChildren()) do
@@ -202,7 +208,7 @@ local function hasHat()
     return false
 end
 
-local function clearHat()
+local function clearAcc()
     local char = LP.Character
     if not char then return end
     for _, d in ipairs(char:GetChildren()) do
@@ -210,8 +216,8 @@ local function clearHat()
     end
 end
 
-local function loadHat()
-    local ok, objs = pcall(function() return game:GetObjects("rbxassetid://" .. HAT_ID) end)
+local function loadAcc(id)
+    local ok, objs = pcall(function() return game:GetObjects("rbxassetid://" .. id) end)
     if ok and objs then
         for _, o in ipairs(objs) do
             if o:IsA("Accessory") or o:IsA("Hat") then return o end
@@ -227,7 +233,7 @@ local function loadHat()
         end
     end
 
-    local ok2, model = pcall(function() return game:GetService("InsertService"):LoadAsset(HAT_ID) end)
+    local ok2, model = pcall(function() return game:GetService("InsertService"):LoadAsset(id) end)
     if ok2 and model then
         for _, d in ipairs(model:GetDescendants()) do
             if d:IsA("Accessory") or d:IsA("Hat") then return d end
@@ -239,11 +245,11 @@ local function loadHat()
     return nil
 end
 
-local function placeHat(acc, handle, head)
+local function placeAcc(acc, handle, head)
     local existing = handle:FindFirstChildWhichIsA("Weld")
     if existing then
-        if math.abs(hatOffsetY) > 0.001 then
-            pcall(function() existing.C1 = existing.C1 * CFrame.new(0, hatOffsetY, 0) end)
+        if math.abs(accOffsetY) > 0.001 then
+            pcall(function() existing.C1 = existing.C1 * CFrame.new(0, accOffsetY, 0) end)
         end
         return "прикреплено штатно"
     end
@@ -262,8 +268,8 @@ local function placeHat(acc, handle, head)
         local lift = head.Size.Y / 2 + handle.Size.Y / 2 * 0.5
         cf = head.CFrame * CFrame.new(0, lift, 0)
     end
-    if math.abs(hatOffsetY) > 0.001 then
-        cf = cf * CFrame.new(0, hatOffsetY, 0)
+    if math.abs(accOffsetY) > 0.001 then
+        cf = cf * CFrame.new(0, accOffsetY, 0)
     end
 
     handle.CFrame = cf
@@ -274,16 +280,16 @@ local function placeHat(acc, handle, head)
     return "приварено к голове"
 end
 
-local function applyHat()
-    if hatBusy then return end
+local function applyAcc(id)
+    if accBusy then return end
     local char = LP.Character
     local head = char and char:FindFirstChild("Head")
-    if not head or not head:IsA("BasePart") then hatLast = "нет головы" return end
-    if hasHat() then return end
-    hatBusy = true
+    if not head or not head:IsA("BasePart") then accLast = "нет головы" return end
+    if hasAcc() then return end
+    accBusy = true
 
     local ok, res = pcall(function()
-        local found = loadHat()
+        local found = loadAcc(id)
         if not found then error("ассет не загрузился") end
 
         local acc, handle
@@ -308,20 +314,31 @@ local function applyHat()
         handle.CastShadow = true
 
         acc.Parent = char
-        return placeHat(acc, handle, head)
+        return placeAcc(acc, handle, head)
     end)
 
-    hatBusy = false
-    hatLast = ok and res or ("ошибка: " .. tostring(res))
+    accBusy = false
+    accLast = ok and res or ("ошибка: " .. tostring(res))
 end
 
-local function reHat()
-    if hatTimer then pcall(function() task.cancel(hatTimer) end) end
-    hatTimer = task.delay(0.2, function()
-        hatTimer = nil
-        pcall(clearHat)
-        hatAt = 0
-        task.spawn(function() pcall(applyHat) end)
+local function setAcc(id)
+    accCurrent = id
+    pcall(clearAcc)
+    accAt = 0
+    if id ~= 0 then
+        task.spawn(function() pcall(applyAcc, id) end)
+    else
+        accLast = "снято"
+    end
+end
+
+local function reAcc()
+    if accTimer then pcall(function() task.cancel(accTimer) end) end
+    accTimer = task.delay(0.2, function()
+        accTimer = nil
+        pcall(clearAcc)
+        accAt = 0
+        if accCurrent ~= 0 then task.spawn(function() pcall(applyAcc, accCurrent) end) end
     end)
 end
 
@@ -899,9 +916,9 @@ local function enforce()
         end
     end
 
-    if CONFIG.hat and not hatBusy and not hasHat() and os.clock() - hatAt > 1 then
-        hatAt = os.clock()
-        task.spawn(function() pcall(applyHat) end)
+    if accCurrent ~= 0 and not accBusy and not hasAcc() and os.clock() - accAt > 1 then
+        accAt = os.clock()
+        task.spawn(function() pcall(applyAcc, accCurrent) end)
     end
 
     pcall(cleanupParts, list)
@@ -937,7 +954,7 @@ local function watchChar(char)
     meshCache = nil
     cmMisses = 0
     airJumps = 0
-    hatAt = 0
+    accAt = 0
     enforce()
     task.delay(0.25, enforce)
     task.delay(0.8, enforce)
@@ -1165,7 +1182,7 @@ local function setOpen(force)
     end
 end
 
-local setHeadless, setKorblox, setForce, setBoost, setHat, setInf
+local setHeadless, setKorblox, setForce, setBoost, setInf
 
 local function build()
     gui = Instance.new("ScreenGui")
@@ -1239,19 +1256,17 @@ local function build()
         CONFIG.korblox = v
         for _, c in ipairs(targets()) do pcall(applyKorblox, c, v) end
     end)
-    setHat = row("Шапка Doomsekkar", CONFIG.hat, function(v)
-        CONFIG.hat = v
-        if v then
-            hatAt = 0
-            task.spawn(function() pcall(applyHat) end)
-        else
-            pcall(clearHat)
-        end
-    end)
-    slider("Смещение шапки", -0.6, 1.2, hatOffsetY, function(v)
-        hatOffsetY = v
-        if CONFIG.hat then reHat() end
+
+    section("ГОЛОВА")
+    for _, a in ipairs(ACCS) do
+        button(a.name, function() setAcc(a.id) end)
+    end
+    button("Снять", function() setAcc(0) end)
+    slider("Смещение", -0.6, 1.2, accOffsetY, function(v)
+        accOffsetY = v
+        if accCurrent ~= 0 then reAcc() end
     end, 0.05)
+
     setForce = row("Жёсткая фиксация", CONFIG.force, function(v)
         CONFIG.force = v
         enforce()
@@ -1311,12 +1326,11 @@ local function build()
     end, 5)
 
     section("ПРОЧЕЕ")
-    button("Шапку заново", function()
-        CONFIG.hat = true
-        if setHat then setHat(true) end
-        pcall(clearHat)
-        hatAt = 0
-        task.spawn(function() pcall(applyHat) end)
+    button("Аксессуар заново", function()
+        if accCurrent == 0 then accCurrent = ACCS[1].id end
+        pcall(clearAcc)
+        accAt = 0
+        task.spawn(function() pcall(applyAcc, accCurrent) end)
     end)
     button("Вернуть голову", function()
         CONFIG.headless = false
@@ -1329,9 +1343,9 @@ local function build()
         if setHeadless then setHeadless(true) end
         if setKorblox then setKorblox(true) end
         if setForce then setForce(true) end
-        if CONFIG.hat then
-            hatAt = 0
-            task.spawn(function() pcall(applyHat) end)
+        if accCurrent ~= 0 then
+            accAt = 0
+            task.spawn(function() pcall(applyAcc, accCurrent) end)
         end
 
         refreshScan()
@@ -1355,7 +1369,7 @@ local function build()
         print("[Venice] риг:", hum and hum.RigType.Name or "нет")
         print("[Venice] weld-режим:", tostring(weldMode))
         print("[Venice] CreateMeshPartAsync:", meshCache and "ок" or "недоступен")
-        print("[Venice] шапка:", CONFIG.hat and "вкл" or "выкл", "| на голове:", tostring(hasHat()), "| статус:", hatLast, "| смещение:", hatOffsetY)
+        print("[Venice] аксессуар:", accCurrent, "| на голове:", tostring(hasAcc()), "| статус:", accLast, "| смещение:", accOffsetY)
         print("[Venice] инф.прыжок:", tostring(CONFIG.infJump), "лимит:", CONFIG.jumpLimit, "счётчик:", airJumps)
         print("[Venice] fps:", tostring(FPS.boost), "частиц убито:", #killedParts, "эффектов:", #killedFx)
         print("[Venice] FOV:", tostring(fovTarget), "небо:", SKY.mode)
@@ -1367,20 +1381,20 @@ local function build()
     end)
     button("Убрать всё", function()
         CONFIG.headless, CONFIG.korblox, CONFIG.force = false, false, false
-        CONFIG.infJump, CONFIG.hat = false, false
+        CONFIG.infJump = false
+        accCurrent = 0
         FPS.boost, FPS.shadowsOff, FPS.fxOff, FPS.partsOff = false, false, false, false
         if setHeadless then setHeadless(false) end
         if setKorblox then setKorblox(false) end
         if setForce then setForce(false) end
         if setBoost then setBoost(false) end
         if setInf then setInf(false) end
-        if setHat then setHat(false) end
         syncFps()
         for _, c in ipairs(targets()) do
             pcall(applyHeadless, c, false)
             pcall(clearKorblox, c)
         end
-        pcall(clearHat)
+        pcall(clearAcc)
         pcall(applySky, "off")
         fovTarget = 70
         pcall(applyFov)
@@ -1414,7 +1428,7 @@ local function build()
         end
     end)
 
-    print("[Venice] v19 · Z меню")
+    print("[Venice] v20 · Z меню")
 end
 
 build()
@@ -1431,7 +1445,6 @@ pcall(function()
     end, false, Enum.ContextActionPriority.High.Value, Enum.KeyCode.Z)
 end)
 
--- дублирующий бинд, если CAS в экзекьюторе ведёт себя странно
 track(UIS.InputBegan:Connect(function(input, gp)
     if gp then return end
     if input.KeyCode ~= Enum.KeyCode.Z then return end
