@@ -12,7 +12,6 @@ local UIS      = ref(game:GetService("UserInputService"))
 local TweenS   = ref(game:GetService("TweenService"))
 local Lighting = ref(game:GetService("Lighting"))
 local AssetS   = ref(game:GetService("AssetService"))
-local InsertS  = ref(game:GetService("InsertService"))
 local RunS     = ref(game:GetService("RunService"))
 local CAS      = ref(game:GetService("ContextActionService"))
 local WS       = ref(workspace)
@@ -405,10 +404,16 @@ end))
 local walkOrig = {}
 local lastJump = {}
 local canKey = (type(keypress) == "function" and type(keyrelease) == "function")
+local needHold = UIS.KeyboardEnabled
+
+local function spaceHeld()
+    if not needHold then return true end
+    return UIS:IsKeyDown(Enum.KeyCode.Space)
+end
 
 local function doJump(hum)
     local now = os.clock()
-    if lastJump[hum] and now - lastJump[hum] < 0.15 then return end
+    if lastJump[hum] and now - lastJump[hum] < 0.03 then return end
     lastJump[hum] = now
 
     pcall(function() hum.Jump = true end)
@@ -416,7 +421,7 @@ local function doJump(hum)
 
     if canKey then
         pcall(keypress, 0x20)
-        task.delay(0.05, function() pcall(keyrelease, 0x20) end)
+        task.delay(0.02, function() pcall(keyrelease, 0x20) end)
     end
 end
 
@@ -437,11 +442,12 @@ end
 
 track(RunS.Heartbeat:Connect(function()
     if not CONFIG.autojump and not CONFIG.speed then return end
+    local held = CONFIG.autojump and spaceHeld()
     for _, char in ipairs(targets()) do
         local hum = char:FindFirstChildOfClass("Humanoid")
         if hum and hum.Health > 0 then
             if CONFIG.speed then applySpeed(hum) end
-            if CONFIG.autojump and hum.FloorMaterial ~= Enum.Material.Air then
+            if held and hum.FloorMaterial ~= Enum.Material.Air then
                 local st = hum:GetState()
                 if st ~= Enum.HumanoidStateType.Jumping and st ~= Enum.HumanoidStateType.Freefall then
                     doJump(hum)
@@ -586,100 +592,6 @@ track(Lighting.ChildAdded:Connect(function(d)
     end
 end))
 
--- ============================== аксессуары ==============================
-
-local ACC = { head = nil, body = nil, legs = nil }
-local accMade = { head = {}, body = {}, legs = {} }
-
-local function clearAcc(kind)
-    for _, o in ipairs(accMade[kind] or {}) do
-        if o and o.Parent then pcall(function() o:Destroy() end) end
-    end
-    accMade[kind] = {}
-end
-
-local function clearAllAcc()
-    for _, k in ipairs({ "head", "body", "legs" }) do
-        clearAcc(k)
-        ACC[k] = nil
-    end
-end
-
-local function anchorFor(char, kind)
-    if kind == "head" then return char:FindFirstChild("Head") end
-    if kind == "body" then return char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso") end
-    return char:FindFirstChild("RightUpperLeg") or char:FindFirstChild("Right Leg")
-end
-
-local function offsetFor(kind)
-    if kind == "head" then return Vector3.new(0, 1.1, 0) end
-    if kind == "body" then return Vector3.new(0, 0, 0.7) end
-    return Vector3.new(0, 0.2, 0.45)
-end
-
-local function fallbackPart(kind, anchor, id)
-    local p = Instance.new("Part")
-    p.Name = "VeniceAcc"
-    p.Size = Vector3.new(1, 1, 1)
-    p.Anchored = false
-    p.CanCollide = false
-    p.CanQuery = false
-    p.CanTouch = false
-    pcall(function() p.Massless = true end)
-    local sm = Instance.new("SpecialMesh", p)
-    sm.MeshType = Enum.MeshType.FileMesh
-    sm.MeshId = "rbxassetid://" .. id
-    p.CFrame = anchor.CFrame * CFrame.new(offsetFor(kind))
-    p.Parent = getFolder()
-    local w = Instance.new("WeldConstraint")
-    w.Part0 = p
-    w.Part1 = anchor
-    w.Parent = p
-    return p
-end
-
-local function attach(kind, idText)
-    local id = tonumber((tostring(idText):gsub("[^%d]", "")))
-    if not id then print("[Venice] нет id") return end
-    local char = targets()[1]
-    if not char then return end
-    local hum = char:FindFirstChildOfClass("Humanoid")
-    if not hum then return end
-    local anchor = anchorFor(char, kind)
-    if not anchor or not anchor:IsA("BasePart") then print("[Venice] нет точки крепления") return end
-
-    clearAcc(kind)
-    ACC[kind] = id
-
-    local ok, model = pcall(function() return InsertS:LoadAsset(id) end)
-    local done = false
-
-    if ok and model then
-        local acc = model:FindFirstChildWhichIsA("Accessory", true) or model:FindFirstChildWhichIsA("Hat", true)
-        if acc then
-            local copy = acc:Clone()
-            if pcall(function() hum:AddAccessory(copy) end) then
-                table.insert(accMade[kind], copy)
-                done = true
-            end
-        end
-    end
-
-    if not done then
-        local p = fallbackPart(kind, anchor, id)
-        table.insert(accMade[kind], p)
-    end
-
-    print("[Venice] аксессуар", kind, id, done and "(готовый)" or "(меш)")
-end
-
-local function reapplyAcc()
-    for _, k in ipairs({ "head", "body", "legs" }) do
-        accMade[k] = {}
-        if ACC[k] then pcall(attach, k, ACC[k]) end
-    end
-end
-
 -- ============================== фиксация ==============================
 
 local function enforce()
@@ -757,11 +669,6 @@ end
 if LP.Character then watchChar(LP.Character) end
 track(LP.CharacterAdded:Connect(watchChar))
 track(LP.CharacterAppearanceLoaded:Connect(enforce))
-
-track(LP.CharacterAdded:Connect(function()
-    task.wait(1.5)
-    pcall(reapplyAcc)
-end))
 
 track(WS.ChildAdded:Connect(function(m)
     if not m:IsA("Model") then return end
@@ -1028,19 +935,14 @@ local function slider(text, min, max, default, cb, step)
     fill.Parent = bar
     Instance.new("UICorner", fill).CornerRadius = UDim.new(1, 0)
 
-    local function setVal(val, silent)
-        local rel = math.clamp((val - min) / (max - min), 0, 1)
-        v.Text = tostring(val)
-        fill.Size = UDim2.fromScale(rel, 1)
-        if not silent then pcall(cb, val) end
-    end
-
     local drag = false
     local function setX(x)
         local rel = math.clamp((x - bar.AbsolutePosition.X) / bar.AbsoluteSize.X, 0, 1)
         local raw = min + (max - min) * rel
         local val = step and (math.floor(raw / step + 0.5) * step) or math.floor(raw + 0.5)
-        setVal(val)
+        v.Text = tostring(val)
+        fill.Size = UDim2.fromScale(rel, 1)
+        pcall(cb, val)
     end
     track(bar.InputBegan:Connect(function(i)
         if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
@@ -1058,49 +960,6 @@ local function slider(text, min, max, default, cb, step)
             drag = false
         end
     end))
-
-    return function(val) setVal(val) end
-end
-
-local function idRow(placeholder, cb)
-    local r = Instance.new("Frame")
-    r.Size = UDim2.new(1, -8, 0, 30)
-    r.BackgroundColor3 = ROW
-    r.BorderSizePixel = 0
-    r.Parent = panel
-    Instance.new("UICorner", r).CornerRadius = UDim.new(0, 8)
-
-    local box = Instance.new("TextBox")
-    box.Size = UDim2.new(1, -46, 1, 0)
-    box.Position = UDim2.fromOffset(8, 0)
-    box.BackgroundTransparency = 1
-    box.Font = Enum.Font.GothamSemibold
-    box.TextSize = 11
-    box.TextColor3 = TEXT
-    box.PlaceholderText = placeholder
-    box.PlaceholderColor3 = SUB
-    box.TextXAlignment = Enum.TextXAlignment.Left
-    box.ClearTextOnFocus = false
-    box.Text = ""
-    box.Parent = r
-
-    local btn = Instance.new("TextButton")
-    btn.Size = UDim2.fromOffset(38, 22)
-    btn.Position = UDim2.new(1, -42, 0.5, -11)
-    btn.BackgroundColor3 = OFF
-    btn.BorderSizePixel = 0
-    btn.Font = Enum.Font.GothamBold
-    btn.TextSize = 10
-    btn.TextColor3 = TEXT
-    btn.Text = "OK"
-    btn.Parent = r
-    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
-
-    local function fire()
-        if box.Text ~= "" then task.spawn(function() pcall(cb, box.Text) end) end
-    end
-    btn.MouseButton1Click:Connect(fire)
-    box.FocusLost:Connect(function(enter) if enter then fire() end end)
 end
 
 local function setOpen(force)
@@ -1117,7 +976,6 @@ local function setOpen(force)
 end
 
 local setHeadless, setKorblox, setForce, setBoost, setJump, setSpeed
-local setStars, setFog, setClock
 
 local function build()
     gui = Instance.new("ScreenGui")
@@ -1197,7 +1055,7 @@ local function build()
     end, 26)
 
     section("ДВИЖЕНИЕ")
-    setJump = row("Автопрыжок", CONFIG.autojump, function(v)
+    setJump = row("Автобанихоп", CONFIG.autojump, function(v)
         CONFIG.autojump = v
     end)
     setSpeed = row("Спидхак", CONFIG.speed, function(v)
@@ -1213,12 +1071,6 @@ local function build()
         speedTarget = v
     end, 1)
 
-    section("АКСЕССУАРЫ")
-    idRow("ID на голову", function(t) attach("head", t) end)
-    idRow("ID на тело", function(t) attach("body", t) end)
-    idRow("ID на ноги", function(t) attach("legs", t) end)
-    button("Снять аксессуары", function() clearAllAcc() end)
-
     section("КАМЕРА")
     slider("FOV", 40, 120, fovTarget, function(v)
         fovTarget = v
@@ -1227,29 +1079,17 @@ local function build()
 
     section("НЕБО")
     button("Небо выкл", function() applySky("off") end)
-    button("Ночь", function() applySky("night") setStars(SKY.stars) setFog(SKY.fog) setClock(SKY.clock) end)
-    button("Космос", function() applySky("space") setStars(SKY.stars) setFog(SKY.fog) setClock(SKY.clock) end)
-    button("Закат", function() applySky("sunset") setStars(SKY.stars) setFog(SKY.fog) setClock(SKY.clock) end)
-    button("Сумерки", function() applySky("dusk") setStars(SKY.stars) setFog(SKY.fog) setClock(SKY.clock) end)
-    button("Классика", function() applySky("classic") setStars(SKY.stars) setFog(SKY.fog) setClock(SKY.clock) end)
-    button("Пасмурно", function() applySky("overcast") setStars(SKY.stars) setFog(SKY.fog) setClock(SKY.clock) end)
-    button("Пустота", function() applySky("void") setStars(SKY.stars) setFog(SKY.fog) setClock(SKY.clock) end)
-    button("Инферно", function() applySky("inferno") setStars(SKY.stars) setFog(SKY.fog) setClock(SKY.clock) end)
-    button("Лёд", function() applySky("ice") setStars(SKY.stars) setFog(SKY.fog) setClock(SKY.clock) end)
-    button("Матрица", function() applySky("matrix") setStars(SKY.stars) setFog(SKY.fog) setClock(SKY.clock) end)
-    button("Кровь", function() applySky("blood") setStars(SKY.stars) setFog(SKY.fog) setClock(SKY.clock) end)
-    setStars = slider("Звёзды", 0, 3000, 0, function(v)
-        SKY.stars = v
-        syncSky()
-    end, 50)
-    setFog = slider("Туман", 50, 6000, 600, function(v)
-        SKY.fog = v
-        syncSky()
-    end, 50)
-    setClock = slider("Время", 0, 24, 1, function(v)
-        SKY.clock = v
-        if SKY.mode ~= "off" then Lighting.ClockTime = v end
-    end, 1)
+    button("Ночь", function() applySky("night") end)
+    button("Космос", function() applySky("space") end)
+    button("Закат", function() applySky("sunset") end)
+    button("Сумерки", function() applySky("dusk") end)
+    button("Классика", function() applySky("classic") end)
+    button("Пасмурно", function() applySky("overcast") end)
+    button("Пустота", function() applySky("void") end)
+    button("Инферно", function() applySky("inferno") end)
+    button("Лёд", function() applySky("ice") end)
+    button("Матрица", function() applySky("matrix") end)
+    button("Кровь", function() applySky("blood") end)
 
     section("FPS")
     setBoost = row("FPS Boost", FPS.boost, function(v)
@@ -1328,7 +1168,6 @@ local function build()
             local hum = c:FindFirstChildOfClass("Humanoid")
             if hum then pcall(restoreSpeed, hum) end
         end
-        pcall(clearAllAcc)
         pcall(applySky, "off")
         fovTarget = 70
         pcall(applyFov)
@@ -1362,7 +1201,7 @@ local function build()
         end
     end)
 
-    print("[Venice] v10 · Z меню")
+    print("[Venice] v11 · Z меню")
 end
 
 build()
