@@ -18,7 +18,7 @@ while not LP do task.wait() end
 
 local function track(c) table.insert(getgenv().VeniceCosConns, c) return c end
 
-local CONFIG = { korblox = true, headless = true, force = true, speed = false, vel = true, infJump = false }
+local CONFIG = { korblox = true, headless = true, force = true, speed = false, vel = true, infJump = false, jumpLimit = 0 }
 local FPS = { boost = false, shadowsOff = false, fxOff = false, partsOff = false, cap = 240 }
 
 local speedTarget = 25
@@ -442,7 +442,46 @@ local humHooked = setmetatable({}, { __mode = "k" })
 local speedGuard = false
 local humCache = {}
 local humAt = 0
+local ownAt = 0
 local lastJump = 0
+local airJumps = 0
+
+local velRoot, velAtt, velLV = nil, nil, nil
+
+local function claimOwnership()
+    local char = LP.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    if root and root:IsA("BasePart") then
+        pcall(function() root:SetNetworkOwner(LP) end)
+    end
+end
+
+local function ensureVel(root)
+    if velLV and velLV.Parent and velRoot == root and velAtt and velAtt.Parent == root then
+        return velLV
+    end
+    if velLV then pcall(function() velLV:Destroy() end) end
+    if velAtt then pcall(function() velAtt:Destroy() end) end
+    velLV, velAtt, velRoot = nil, nil, nil
+
+    local att = Instance.new("Attachment")
+    att.Name = "VeniceSpeedAttach"
+    att.Parent = root
+
+    local lv = Instance.new("LinearVelocity")
+    lv.Name = "VeniceSpeed"
+    lv.Attachment0 = att
+    pcall(function()
+        lv.ForceLimitMode = Enum.ForceLimitMode.Magnitude
+        lv.RelativeTo = Enum.ActuatorRelativeTo.World
+        lv.VelocityConstraintMode = Enum.VelocityConstraintMode.Vector
+    end)
+    lv.MaxForce = 1e7
+    lv.Parent = root
+
+    velRoot, velAtt, velLV = root, att, lv
+    return lv
+end
 
 local function applySpeed(hum)
     if walkOrig[hum] == nil then walkOrig[hum] = hum.WalkSpeed end
@@ -488,7 +527,7 @@ local function keyDir()
     return Vector3.zero
 end
 
-local function velStep(hum)
+local function velStep(hum, dt)
     local char = hum.Parent
     if not char then return end
     local root = hum.RootPart
@@ -502,13 +541,32 @@ local function velStep(hum)
 
     local dir = hum.MoveDirection
     if dir.Magnitude < 0.05 then dir = keyDir() end
-    if dir.Magnitude < 0.05 then return end
-    dir = dir.Unit
 
     local v = root.AssemblyLinearVelocity
+
+    if dir.Magnitude < 0.05 then
+        if velLV then velLV.Enabled = false end
+        return
+    end
+    dir = dir.Unit
+
+    if CONFIG.vel then
+        local lv = ensureVel(root)
+        if lv then
+            local y = v.Y
+            if hum.FloorMaterial == Enum.Material.Air then
+                y = y - WS.Gravity * dt
+            else
+                y = math.max(y - WS.Gravity * dt, -3)
+            end
+            lv.VectorVelocity = Vector3.new(dir.X * speedTarget, y, dir.Z * speedTarget)
+            lv.Enabled = true
+            return
+        end
+    end
+
     local horiz = Vector3.new(v.X, 0, v.Z)
-    local want = dir * speedTarget
-    local mix = horiz:Lerp(want, 0.35)
+    local mix = horiz:Lerp(dir * speedTarget, 0.35)
     root.AssemblyLinearVelocity = Vector3.new(mix.X, v.Y, mix.Z)
 end
 
@@ -528,13 +586,21 @@ local function infJump()
     if not CONFIG.infJump then return end
     local now = os.clock()
     if now - lastJump < 0.04 then return end
-    lastJump = now
 
     local char = LP.Character
     local hum = char and char:FindFirstChildOfClass("Humanoid")
     if not hum or hum.Health <= 0 then return end
     local root = hum.RootPart
     if not root or root.Anchored then return end
+
+    local grounded = hum.FloorMaterial ~= Enum.Material.Air
+    if grounded then
+        airJumps = 0
+    else
+        if CONFIG.jumpLimit > 0 and airJumps >= CONFIG.jumpLimit then return end
+        airJumps = airJumps + 1
+    end
+    lastJump = now
 
     pcall(function() hum:ChangeState(Enum.HumanoidStateType.Jumping) end)
 
@@ -552,16 +618,23 @@ end
 
 track(UIS.JumpRequest:Connect(function() pcall(infJump) end))
 
-track(RunS.Stepped:Connect(function()
+track(RunS.Stepped:Connect(function(_, dt)
     if not CONFIG.speed and not CONFIG.infJump then return end
     if os.clock() - humAt > 0.25 then refreshHums() end
     for _, hum in ipairs(humCache) do
         if hum.Parent and hum.Health > 0 then
+            if hum.Parent == LP.Character and hum.FloorMaterial ~= Enum.Material.Air then
+                airJumps = 0
+            end
             if CONFIG.speed then
                 applySpeed(hum)
-                if CONFIG.vel and hum.Parent == LP.Character then velStep(hum) end
+                if hum.Parent == LP.Character then velStep(hum, dt) end
             end
         end
+    end
+    if CONFIG.speed and os.clock() - ownAt > 1 then
+        ownAt = os.clock()
+        claimOwnership()
     end
 end))
 
@@ -752,6 +825,9 @@ end
 local function watchChar(char)
     meshCache = nil
     cmMisses = 0
+    airJumps = 0
+    velRoot, velAtt, velLV = nil, nil, nil
+    claimOwnership()
     enforce()
     task.delay(0.25, enforce)
     task.delay(0.8, enforce)
@@ -997,7 +1073,7 @@ local function button(text, cb, highlight)
     return l
 end
 
-local function slider(text, min, max, default, cb, step)
+local function slider(text, min, max, default, cb, step, fmt)
     local r = Instance.new("Frame")
     r.Size = UDim2.new(1, -8, 0, 40)
     r.BackgroundColor3 = ROW
@@ -1024,7 +1100,7 @@ local function slider(text, min, max, default, cb, step)
     v.TextSize = 11
     v.TextColor3 = ACCENT
     v.TextXAlignment = Enum.TextXAlignment.Right
-    v.Text = tostring(default)
+    v.Text = fmt and fmt(default) or tostring(default)
     v.Parent = r
 
     local bar = Instance.new("Frame")
@@ -1047,7 +1123,7 @@ local function slider(text, min, max, default, cb, step)
         local rel = math.clamp((x - bar.AbsolutePosition.X) / bar.AbsoluteSize.X, 0, 1)
         local raw = min + (max - min) * rel
         local val = step and (math.floor(raw / step + 0.5) * step) or math.floor(raw + 0.5)
-        v.Text = tostring(val)
+        v.Text = fmt and fmt(val) or tostring(val)
         fill.Size = UDim2.fromScale(rel, 1)
         pcall(cb, val)
     end
@@ -1165,20 +1241,25 @@ local function build()
     setSpeed = row("Спидхак", CONFIG.speed, function(v)
         CONFIG.speed = v
         if v then
+            claimOwnership()
             refreshHums()
             for _, hum in ipairs(humCache) do
                 if hum.Parent then pcall(applySpeed, hum) end
             end
         else
             table.clear(humCache)
+            if velLV then pcall(function() velLV:Destroy() end) end
+            if velAtt then pcall(function() velAtt:Destroy() end) end
+            velLV, velAtt, velRoot = nil, nil, nil
             for _, c in ipairs(targets()) do
                 local hum = c:FindFirstChildOfClass("Humanoid")
                 if hum then pcall(restoreSpeed, hum) end
             end
         end
     end)
-    setVel = row("Импульс (velocity)", CONFIG.vel, function(v)
+    setVel = row("Импульс (constraint)", CONFIG.vel, function(v)
         CONFIG.vel = v
+        if not v and velLV then velLV.Enabled = false end
     end, 26)
     slider("Скорость", 16, 80, speedTarget, function(v)
         speedTarget = v
@@ -1190,7 +1271,12 @@ local function build()
     end, 1)
     setInf = row("Бесконечный прыжок", CONFIG.infJump, function(v)
         CONFIG.infJump = v
+        airJumps = 0
     end)
+    slider("Прыжков в воздухе", 0, 10, CONFIG.jumpLimit, function(v)
+        CONFIG.jumpLimit = v
+        airJumps = 0
+    end, 1, function(v) if v == 0 then return "∞" end return tostring(v) end)
 
     section("КАМЕРА")
     slider("FOV", 40, 120, fovTarget, function(v)
@@ -1250,6 +1336,7 @@ local function build()
 
         refreshScan()
         refreshHums()
+        claimOwnership()
         syncFps()
         if SKY.mode ~= "off" then pcall(applySky, SKY.mode) end
 
@@ -1272,11 +1359,15 @@ local function build()
         print("[Venice] CreateMeshPartAsync:", meshCache and "ок" or "недоступен")
         print("[Venice] хук WalkSpeed:", hookedSpeed and "есть" or "нет")
         print("[Venice] спидхак:", CONFIG.speed and ("вкл " .. speedTarget) or "выкл", "импульс:", tostring(CONFIG.vel))
-        print("[Venice] инф.прыжок:", tostring(CONFIG.infJump))
+        print("[Venice] инф.прыжок:", tostring(CONFIG.infJump), "лимит:", CONFIG.jumpLimit, "счётчик:", airJumps)
         if hum then
             local root = hum.RootPart
             print("[Venice] walk:", hum.WalkSpeed, "vel:", root and root.AssemblyLinearVelocity.Magnitude or "-")
             print("[Venice] MoveDirection:", tostring(hum.MoveDirection))
+            if root then
+                print("[Venice] owner:", tostring(root:GetNetworkOwner()))
+                print("[Venice] constraint:", velLV and tostring(velLV.Enabled) or "нет")
+            end
         end
         print("[Venice] FOV:", tostring(fovTarget), "небо:", SKY.mode)
         if char then
@@ -1331,12 +1422,14 @@ local function build()
     gui.Destroying:Connect(function()
         pcall(function() RunS:UnbindFromRenderStep("VeniceEnforce") end)
         pcall(function() CAS:UnbindAction("VeniceMenu") end)
+        if velLV then pcall(function() velLV:Destroy() end) end
+        if velAtt then pcall(function() velAtt:Destroy() end) end
         if partsFolder then
             for _, o in ipairs(partsFolder:GetChildren()) do pcall(function() o:Destroy() end) end
         end
     end)
 
-    print("[Venice] v14 · Z меню")
+    print("[Venice] v15 · Z меню")
 end
 
 build()
