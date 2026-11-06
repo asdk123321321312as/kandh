@@ -1,6 +1,7 @@
---[[ Venice · Korblox + Headless + FPS · v3 universal
-     R6 / R15 / кастомные риги, все игры
-     H — голова, K — коробокс, F — буст, Z — меню ]]
+--[[ Venice · Korblox + Headless + FPS · v4 universal
+     R6 / R15 / кастомные риги
+     H — голова, K — коробокс, F — буст, Z — меню
+     v4: аксессуары, восстановление оригиналов, валидация, force-режим ]]
 
 if getgenv().VeniceCos then pcall(function() getgenv().VeniceCos:Destroy() end) end
 if getgenv().VeniceCosConns then
@@ -14,12 +15,13 @@ local UIS      = ref(game:GetService("UserInputService"))
 local TweenS   = ref(game:GetService("TweenService"))
 local Lighting = ref(game:GetService("Lighting"))
 local AssetS   = ref(game:GetService("AssetService"))
+local RunS     = ref(game:GetService("RunService"))
 local LP       = Players.LocalPlayer
 while not LP do task.wait() end
 
 local function track(c) table.insert(getgenv().VeniceCosConns, c) return c end
 
-local CONFIG = { korblox = true, headless = true }
+local CONFIG = { korblox = true, headless = true, force = false }
 local FPS = { boost = false, shadowsOff = false, fxOff = false, partsOff = false, cap = 240 }
 
 local MESH = "rbxassetid://101851696"
@@ -33,51 +35,95 @@ local TEXT   = Color3.fromRGB(238, 238, 244)
 local SUB    = Color3.fromRGB(128, 128, 144)
 local OKC    = Color3.fromRGB(120, 220, 160)
 
--- ============================== стелс ==============================
-
 if setthreadidentity then pcall(setthreadidentity, 7) end
 
 local function stealthGui(g)
     local h = gethui and gethui()
     local prot = protectgui or protect_gui or (syn and syn.protect_gui)
     if prot then pcall(prot, g) end
-    if h then
-        if pcall(function() g.Parent = h end) then return true end
+    if h then if pcall(function() g.Parent = h end) then return true end end
+    return pcall(function() g.Parent = game:GetService("CoreGui") end)
+end
+
+-- ============================== скрытие / восстановление ==============================
+
+local hiddenOrig = {}
+
+local function setHidden(inst, on)
+    if not inst then return end
+    if on then
+        if hiddenOrig[inst] == nil then hiddenOrig[inst] = inst.Transparency end
+        if inst.Transparency ~= 1 then inst.Transparency = 1 end
+    else
+        local o = hiddenOrig[inst]
+        if o ~= nil then
+            pcall(function() inst.Transparency = o end)
+            hiddenOrig[inst] = nil
+        end
     end
-    local core = game:GetService("CoreGui")
-    return pcall(function() g.Parent = core end)
 end
 
 -- ============================== голова ==============================
 
-local hiddenHead = nil
+local function headAccessories(char, head)
+    local out = {}
+    for _, d in ipairs(char:GetChildren()) do
+        if d:IsA("Accessory") or d:IsA("Hat") then
+            local w = d:FindFirstChildWhichIsA("Weld", true)
+            if w and (w.Part0 == head or w.Part1 == head) then
+                table.insert(out, d)
+            end
+        end
+    end
+    return out
+end
 
 local function applyHeadless(on)
     local char = LP.Character
     if not char then return end
     local head = char:FindFirstChild("Head")
     if not head then return end
-    if head:IsA("BasePart") then
-        head.Transparency = on and 1 or 0
-        if on then hiddenHead = head end
-    end
+
+    setHidden(head, on)
     for _, d in ipairs(head:GetDescendants()) do
-        if d:IsA("Decal") then d.Transparency = on and 1 or 0 end
+        if d:IsA("Decal") then setHidden(d, on) end
+    end
+    for _, acc in ipairs(headAccessories(char, head)) do
+        for _, d in ipairs(acc:GetDescendants()) do
+            if d:IsA("BasePart") or d:IsA("Decal") then setHidden(d, on) end
+        end
     end
 end
 
 -- ============================== коробокс ==============================
 
-local legParts = { "Right Leg", "RightUpperLeg", "RightLowerLeg", "RightFoot" }
+local meshCache = nil
+local savedCharMesh = nil
 
-local function findLeg(char)
-    for _, n in ipairs(legParts) do
-        local p = char:FindFirstChild(n)
-        if p and p:IsA("BasePart") then return p end
+local function findLegParts(char)
+    local upper = char:FindFirstChild("RightUpperLeg") or char:FindFirstChild("Right Leg") or char:FindFirstChild("RightLeg")
+    if not upper then
+        for _, d in ipairs(char:GetChildren()) do
+            if d:IsA("BasePart") and d.Name:match("^Right.*[Uu]pper.*Leg$") then upper = d break end
+        end
     end
-    for _, d in ipairs(char:GetChildren()) do
-        if d:IsA("BasePart") and d.Name:match("^Right.*Leg$") then return d end
+    if not upper then
+        for _, d in ipairs(char:GetChildren()) do
+            if d:IsA("BasePart") and d.Name:match("^Right.*Leg$") then upper = d break end
+        end
     end
+    local lower = char:FindFirstChild("RightLowerLeg") or char:FindFirstChild("Right Lower Leg")
+    local foot  = char:FindFirstChild("RightFoot") or char:FindFirstChild("Right Foot")
+    return upper, lower, foot
+end
+
+local function korbloxOk(char)
+    if char:FindFirstChild("VeniceKorblox") then return true end
+    local p = char:FindFirstChild("VeniceKorbloxLeg")
+    if not p or not p:IsA("BasePart") then return false end
+    local w = p:FindFirstChildWhichIsA("WeldConstraint") or p:FindFirstChildWhichIsA("Weld")
+    if not w or not w.Part1 or not w.Part1:IsDescendantOf(char) then return false end
+    return true
 end
 
 local function clearKorblox()
@@ -87,14 +133,20 @@ local function clearKorblox()
         local o = char:FindFirstChild(n)
         if o then pcall(function() o:Destroy() end) end
     end
-    for _, d in ipairs(char:GetChildren()) do
-        if d:IsA("BasePart") and (d.Name == "Right Leg" or d.Name:match("^Right.*Leg$") or d.Name == "RightFoot") then
-            d.Transparency = 0
-        end
+    local upper, lower, foot = findLegParts(char)
+    setHidden(upper, false)
+    setHidden(lower, false)
+    setHidden(foot, false)
+    if savedCharMesh then
+        local m = Instance.new("CharacterMesh")
+        m.Name = "VeniceKorbloxRestore"
+        m.BodyPart = Enum.BodyPart.RightLeg
+        m.MeshId = savedCharMesh.mesh
+        m.OverlayTextureId = savedCharMesh.tex
+        m.Parent = char
+        savedCharMesh = nil
     end
 end
-
-local meshCache = nil
 
 local function getMeshPart()
     if meshCache and meshCache.Parent then return meshCache end
@@ -115,10 +167,16 @@ local function applyKorblox(on)
     if not hum then return end
 
     if not on then clearKorblox() return end
-
-    if char:FindFirstChild("VeniceKorblox") or char:FindFirstChild("VeniceKorbloxLeg") then return end
+    if korbloxOk(char) then return end
 
     if hum.RigType == Enum.HumanoidRigType.R6 then
+        for _, d in ipairs(char:GetChildren()) do
+            if d:IsA("CharacterMesh") and d.BodyPart == Enum.BodyPart.RightLeg and d.Name ~= "VeniceKorblox" then
+                savedCharMesh = { mesh = d.MeshId, tex = d.OverlayTextureId }
+                pcall(function() d:Destroy() end)
+                break
+            end
+        end
         local m = Instance.new("CharacterMesh")
         m.Name = "VeniceKorblox"
         m.BodyPart = Enum.BodyPart.RightLeg
@@ -128,11 +186,11 @@ local function applyKorblox(on)
         return
     end
 
-    local upper = findLeg(char)
-    if not upper then return end
+    local stale = char:FindFirstChild("VeniceKorbloxLeg")
+    if stale then pcall(function() stale:Destroy() end) end
 
-    local lower = char:FindFirstChild("RightLowerLeg")
-    local foot  = char:FindFirstChild("RightFoot")
+    local upper, lower, foot = findLegParts(char)
+    if not upper then return end
 
     local top = upper.CFrame * CFrame.new(0, upper.Size.Y / 2, 0)
     local bottom
@@ -145,83 +203,99 @@ local function applyKorblox(on)
     end
 
     local a, b = top.Position, bottom.Position
-    local len = math.clamp((a - b).Magnitude, 1, 9)
-    local w   = math.clamp(math.max(upper.Size.X, upper.Size.Z) * 1.05, 0.3, 3)
-    local rot = upper.CFrame - upper.CFrame.Position
+    local delta = a - b
+    local len = math.clamp(delta.Magnitude, 1, 9)
+    local up = delta.Magnitude > 1e-3 and delta.Unit or Vector3.new(0, 1, 0)
+    local mid = (a + b) / 2
+    local w = math.clamp(math.max(upper.Size.X, upper.Size.Z) * 1.05, 0.3, 3)
 
     local part = getMeshPart()
-    local made = part ~= nil
-
     if part then
         pcall(function()
             part.TextureID = TEX
             part.MeshId = MESH
         end)
         part.Name = "VeniceKorbloxLeg"
-        part.Size = Vector3.new(w, len, w)
-        part.CFrame = CFrame.new((a + b) / 2) * rot
     else
         part = Instance.new("Part")
         part.Name = "VeniceKorbloxLeg"
-        part.Size = Vector3.new(w, len, w)
-        part.CFrame = CFrame.new((a + b) / 2) * rot
         local sm = Instance.new("SpecialMesh", part)
         sm.MeshType = Enum.MeshType.FileMesh
         sm.MeshId = MESH
         sm.TextureId = TEX
     end
 
+    part.Size = Vector3.new(w, len, w)
+    part.CFrame = CFrame.lookAt(mid, mid + upper.CFrame.RightVector, up)
     part.Anchored = false
     part.CanCollide = false
     part.CanQuery = false
     part.CanTouch = false
-    part.CastShadow = false
+    part.CastShadow = true
     pcall(function() part.Massless = true end)
     part.TopSurface = Enum.SurfaceType.Smooth
     part.BottomSurface = Enum.SurfaceType.Smooth
     part.Parent = char
 
-    for _, p in ipairs({ upper, lower, foot }) do
-        if p and p:IsA("BasePart") then p.Transparency = 1 end
-    end
-
     local weld = Instance.new("WeldConstraint")
     weld.Part0 = part
     weld.Part1 = upper
     weld.Parent = part
+
+    setHidden(upper, true)
+    setHidden(lower, true)
+    setHidden(foot, true)
 end
 
--- ============================== watchdog ==============================
+-- ============================== фиксация ==============================
 
-task.spawn(function()
-    while getgenv().VeniceCos do
-        task.wait(0.2)
-        if LP.Character and LP:HasAppearanceLoaded() then
-            if CONFIG.headless then pcall(applyHeadless, true) end
-            if CONFIG.korblox then pcall(applyKorblox, true) end
-        end
-    end
-end)
-
-track(LP.CharacterAdded:Connect(function()
-    meshCache = nil
-    task.wait(1.4)
+local function enforce()
+    local char = LP.Character
+    if not char or not LP:HasAppearanceLoaded() then return end
     if CONFIG.headless then pcall(applyHeadless, true) end
     if CONFIG.korblox then pcall(applyKorblox, true) end
+end
+
+local acc = 0
+track(RunS.Heartbeat:Connect(function(dt)
+    if CONFIG.force then
+        enforce()
+    else
+        acc = acc + dt
+        if acc >= 0.1 then
+            acc = 0
+            enforce()
+        end
+    end
 end))
+
+local function hookChar(char)
+    table.clear(hiddenOrig)
+    meshCache = nil
+    savedCharMesh = nil
+    task.delay(0.6, enforce)
+    track(char.DescendantAdded:Connect(function()
+        task.delay(0.05, enforce)
+    end))
+end
+
+if LP.Character then hookChar(LP.Character) end
+track(LP.CharacterAdded:Connect(hookChar))
+track(LP.CharacterAppearanceLoaded:Connect(enforce))
 
 -- ============================== fps ==============================
 
 local saved = {}
-local killed = {}
+local killedFx = {}
+local killedParts = {}
 
-local function killAll(classList)
+local function killAll(classList, store)
     local n = 0
     for _, d in ipairs(workspace:GetDescendants()) do
         if d:IsA(classList[1]) or (classList[2] and d:IsA(classList[2])) then
-            if d.Enabled ~= nil and d.Enabled then
+            if d.Enabled then
                 d.Enabled = false
-                table.insert(killed, d)
+                table.insert(store, d)
                 n = n + 1
                 if n > 4000 then break end
             end
@@ -229,11 +303,11 @@ local function killAll(classList)
     end
 end
 
-local function restoreKilled()
-    for _, d in ipairs(killed) do
-        if d.Parent and d.Enabled ~= nil then pcall(function() d.Enabled = true end) end
+local function restore(list)
+    for _, d in ipairs(list) do
+        if d.Parent then pcall(function() d.Enabled = true end) end
     end
-    table.clear(killed)
+    table.clear(list)
 end
 
 local function setQuality(off)
@@ -265,21 +339,19 @@ local function setPostFx(off)
         for _, d in ipairs(Lighting:GetChildren()) do
             if d:IsA("PostEffect") and d.Enabled then
                 d.Enabled = false
-                table.insert(killed, d)
+                table.insert(killedFx, d)
             end
         end
     else
-        for _, d in ipairs(Lighting:GetChildren()) do
-            if d:IsA("PostEffect") then pcall(function() d.Enabled = true end) end
-        end
+        restore(killedFx)
     end
 end
 
 local function setParticles(off)
     if off then
-        killAll({ "ParticleEmitter", "Beam" })
-        killAll({ "Trail", "Smoke" })
-        killAll({ "Fire", "Sparkles" })
+        killAll({ "ParticleEmitter", "Beam" }, killedParts)
+        killAll({ "Trail", "Smoke" }, killedParts)
+        killAll({ "Fire", "Sparkles" }, killedParts)
         pcall(function()
             local t = workspace:FindFirstChildOfClass("Terrain")
             if t then
@@ -290,7 +362,7 @@ local function setParticles(off)
             end
         end)
     else
-        restoreKilled()
+        restore(killedParts)
         pcall(function()
             local t = workspace:FindFirstChildOfClass("Terrain")
             if t then
@@ -501,13 +573,11 @@ local function build()
     gui.DisplayOrder = 999
     gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
     getgenv().VeniceCos = gui
-    if not stealthGui(gui) then
-        gui.Parent = LP:WaitForChild("PlayerGui")
-    end
+    if not stealthGui(gui) then gui.Parent = LP:WaitForChild("PlayerGui") end
 
     panel = Instance.new("Frame")
     panel.Position = UDim2.fromOffset(20, 90)
-    panel.Size = UDim2.fromOffset(206, 372)
+    panel.Size = UDim2.fromOffset(206, 384)
     panel.BackgroundColor3 = BG
     panel.BackgroundTransparency = 0.05
     panel.BorderSizePixel = 0
@@ -567,13 +637,15 @@ local function build()
         CONFIG.korblox = v
         pcall(applyKorblox, v)
     end)
+    row("Жёсткая фиксация", CONFIG.force, function(v)
+        CONFIG.force = v
+        enforce()
+    end, 26)
 
     section("FPS")
     row("FPS Boost", FPS.boost, function(v)
         FPS.boost = v
-        if v then
-            FPS.shadowsOff, FPS.fxOff, FPS.partsOff = true, true, true
-        end
+        if v then FPS.shadowsOff, FPS.fxOff, FPS.partsOff = true, true, true end
         syncFps()
     end)
     row("Тени off", FPS.shadowsOff, function(v)
@@ -594,24 +666,27 @@ local function build()
     end)
 
     section("ПРОЧЕЕ")
+    button("Переприменить", function()
+        enforce()
+    end)
     button("Диагностика", function()
         local char = LP.Character
         local hum = char and char:FindFirstChildOfClass("Humanoid")
         print("[Venice] риг:", hum and hum.RigType.Name or "нет")
         print("[Venice] CreateMeshPartAsync:", meshCache and "ок" or "недоступен")
+        print("[Venice] аксессуаров на голове:", char and #headAccessories(char, char:FindFirstChild("Head")) or 0)
         if char then
             for _, d in ipairs(char:GetChildren()) do
-                if d:IsA("BasePart") then print("  ", d.Name, d.Size) end
+                if d:IsA("BasePart") then print("  ", d.Name, d.Size, d.Transparency) end
             end
         end
     end)
     button("Убрать всё", function()
-        CONFIG.headless, CONFIG.korblox = false, false
+        CONFIG.headless, CONFIG.korblox, CONFIG.force = false, false, false
         FPS.boost, FPS.shadowsOff, FPS.fxOff, FPS.partsOff = false, false, false, false
         syncFps()
         pcall(applyHeadless, false)
         pcall(clearKorblox)
-        if hiddenHead then hiddenHead = nil end
     end)
 
     panel = savedPanel
@@ -634,7 +709,7 @@ local function build()
         end
     end))
 
-    print("[Venice] v3 · H голова · K коробокс · F буст · Z меню")
+    print("[Venice] v4 · H голова · K коробокс · F буст · Z меню")
 end
 
 build()
@@ -657,5 +732,4 @@ track(UIS.InputBegan:Connect(function(i, gp)
 end))
 
 task.wait(1.2)
-if CONFIG.headless then pcall(applyHeadless, true) end
-if CONFIG.korblox then pcall(applyKorblox, true) end
+enforce()
