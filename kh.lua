@@ -1414,7 +1414,7 @@ local function build()
         end
     end)
 
-    print("[Venice] v18 · Z меню")
+    print("[Venice] v19 · Z меню")
 end
 
 build()
@@ -1428,8 +1428,16 @@ pcall(function()
             return Enum.ContextActionResult.Sink
         end
         return Enum.ContextActionResult.Pass
-    end, false, Enum.ContextActionPriority.High.Value, Enum.ContextActionPriority.High.Value)
+    end, false, Enum.ContextActionPriority.High.Value, Enum.KeyCode.Z)
 end)
+
+-- дублирующий бинд, если CAS в экзекьюторе ведёт себя странно
+track(UIS.InputBegan:Connect(function(input, gp)
+    if gp then return end
+    if input.KeyCode ~= Enum.KeyCode.Z then return end
+    if UIS:GetFocusedTextBox() then return end
+    setOpen()
+end))
 
 task.wait(1.2)
 enforce()
