@@ -1,6 +1,4 @@
---[[ Venice · Korblox + Headless + FPS + FOV + Sky + Acc · v9
-     Z — меню
-     v9: пресеты неба, аксессуары по ID (голова/тело/ноги) ]]
+
 
 if getgenv().VeniceCos then pcall(function() getgenv().VeniceCos:Destroy() end) end
 if getgenv().VeniceCosConns then
@@ -23,8 +21,10 @@ while not LP do task.wait() end
 
 local function track(c) table.insert(getgenv().VeniceCosConns, c) return c end
 
-local CONFIG = { korblox = true, headless = true, force = true }
+local CONFIG = { korblox = true, headless = true, force = true, autojump = false, speed = false }
 local FPS = { boost = false, shadowsOff = false, fxOff = false, partsOff = false, cap = 240 }
+
+local speedTarget = 25
 
 local MESH = "rbxassetid://101851696"
 local TEX  = "rbxassetid://101851254"
@@ -400,6 +400,57 @@ track(WS:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
     applyFov()
 end))
 
+-- ============================== движение ==============================
+
+local walkOrig = {}
+local lastJump = {}
+local canKey = (type(keypress) == "function" and type(keyrelease) == "function")
+
+local function doJump(hum)
+    local now = os.clock()
+    if lastJump[hum] and now - lastJump[hum] < 0.15 then return end
+    lastJump[hum] = now
+
+    pcall(function() hum.Jump = true end)
+    pcall(function() hum:ChangeState(Enum.HumanoidStateType.Jumping) end)
+
+    if canKey then
+        pcall(keypress, 0x20)
+        task.delay(0.05, function() pcall(keyrelease, 0x20) end)
+    end
+end
+
+local function applySpeed(hum)
+    if walkOrig[hum] == nil then walkOrig[hum] = hum.WalkSpeed end
+    if math.abs(hum.WalkSpeed - speedTarget) > 0.5 then
+        pcall(function() hum.WalkSpeed = speedTarget end)
+    end
+end
+
+local function restoreSpeed(hum)
+    local o = walkOrig[hum]
+    if o then
+        pcall(function() hum.WalkSpeed = o end)
+        walkOrig[hum] = nil
+    end
+end
+
+track(RunS.Heartbeat:Connect(function()
+    if not CONFIG.autojump and not CONFIG.speed then return end
+    for _, char in ipairs(targets()) do
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if hum and hum.Health > 0 then
+            if CONFIG.speed then applySpeed(hum) end
+            if CONFIG.autojump and hum.FloorMaterial ~= Enum.Material.Air then
+                local st = hum:GetState()
+                if st ~= Enum.HumanoidStateType.Jumping and st ~= Enum.HumanoidStateType.Freefall then
+                    doJump(hum)
+                end
+            end
+        end
+    end
+end))
+
 -- ============================== небо ==============================
 
 local NIGHT = {
@@ -570,7 +621,6 @@ local function fallbackPart(kind, anchor, id)
     local p = Instance.new("Part")
     p.Name = "VeniceAcc"
     p.Size = Vector3.new(1, 1, 1)
-    p.Transparency = 0
     p.Anchored = false
     p.CanCollide = false
     p.CanQuery = false
@@ -1066,7 +1116,7 @@ local function setOpen(force)
     end
 end
 
-local setHeadless, setKorblox, setForce, setBoost
+local setHeadless, setKorblox, setForce, setBoost, setJump, setSpeed
 local setStars, setFog, setClock
 
 local function build()
@@ -1145,6 +1195,23 @@ local function build()
         CONFIG.force = v
         enforce()
     end, 26)
+
+    section("ДВИЖЕНИЕ")
+    setJump = row("Автопрыжок", CONFIG.autojump, function(v)
+        CONFIG.autojump = v
+    end)
+    setSpeed = row("Спидхак", CONFIG.speed, function(v)
+        CONFIG.speed = v
+        if not v then
+            for _, c in ipairs(targets()) do
+                local hum = c:FindFirstChildOfClass("Humanoid")
+                if hum then pcall(restoreSpeed, hum) end
+            end
+        end
+    end)
+    slider("Скорость", 16, 60, speedTarget, function(v)
+        speedTarget = v
+    end, 1)
 
     section("АКСЕССУАРЫ")
     idRow("ID на голову", function(t) attach("head", t) end)
@@ -1236,6 +1303,7 @@ local function build()
         print("[Venice] риг:", hum and hum.RigType.Name or "нет")
         print("[Venice] weld-режим:", tostring(weldMode))
         print("[Venice] CreateMeshPartAsync:", meshCache and "ок" or "недоступен")
+        print("[Venice] клавиши:", canKey and "да" or "нет")
         print("[Venice] FOV:", tostring(fovTarget), "небо:", SKY.mode)
         if char then
             for _, d in ipairs(char:GetChildren()) do
@@ -1245,15 +1313,20 @@ local function build()
     end)
     button("Убрать всё", function()
         CONFIG.headless, CONFIG.korblox, CONFIG.force = false, false, false
+        CONFIG.autojump, CONFIG.speed = false, false
         FPS.boost, FPS.shadowsOff, FPS.fxOff, FPS.partsOff = false, false, false, false
         if setHeadless then setHeadless(false) end
         if setKorblox then setKorblox(false) end
         if setForce then setForce(false) end
         if setBoost then setBoost(false) end
+        if setJump then setJump(false) end
+        if setSpeed then setSpeed(false) end
         syncFps()
         for _, c in ipairs(targets()) do
             pcall(applyHeadless, c, false)
             pcall(clearKorblox, c)
+            local hum = c:FindFirstChildOfClass("Humanoid")
+            if hum then pcall(restoreSpeed, hum) end
         end
         pcall(clearAllAcc)
         pcall(applySky, "off")
@@ -1289,7 +1362,7 @@ local function build()
         end
     end)
 
-    print("[Venice] v9 · Z меню")
+    print("[Venice] v10 · Z меню")
 end
 
 build()
