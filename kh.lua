@@ -18,10 +18,10 @@ while not LP do task.wait() end
 
 local function track(c) table.insert(getgenv().VeniceCosConns, c) return c end
 
-local CONFIG = { korblox = true, headless = true, force = true, speed = false, vel = true, infJump = false, jumpLimit = 0 }
+local CONFIG = { korblox = true, headless = true, force = true, hat = false, infJump = false, jumpLimit = 0 }
 local FPS = { boost = false, shadowsOff = false, fxOff = false, partsOff = false, cap = 240 }
 
-local speedTarget = 25
+local HAT_ID = 132809431
 
 local MESH = "rbxassetid://101851696"
 local TEX  = "rbxassetid://101851254"
@@ -36,38 +36,6 @@ local SUB    = Color3.fromRGB(128, 128, 144)
 local OKC    = Color3.fromRGB(120, 220, 160)
 
 if setthreadidentity then pcall(setthreadidentity, 7) end
-
--- ============================== хук walkspeed ==============================
-
-local nc = newcclosure or function(f) return f end
-
-if getgenv().VeniceOldNewIndex then
-    local mt0 = getrawmetatable and getrawmetatable(game)
-    if mt0 then
-        pcall(function()
-            setreadonly(mt0, false)
-            mt0.__newindex = getgenv().VeniceOldNewIndex
-            setreadonly(mt0, true)
-        end)
-    end
-    getgenv().VeniceOldNewIndex = nil
-end
-
-local hookedSpeed = false
-pcall(function()
-    local mt = getrawmetatable(game)
-    if not mt then return end
-    getgenv().VeniceOldNewIndex = mt.__newindex
-    setreadonly(mt, false)
-    mt.__newindex = nc(function(self, k, v)
-        if k == "WalkSpeed" and CONFIG.speed and typeof(self) == "Instance" and self.ClassName == "Humanoid" and self.Parent == LP.Character then
-            v = speedTarget
-        end
-        return getgenv().VeniceOldNewIndex(self, k, v)
-    end)
-    setreadonly(mt, true)
-    hookedSpeed = true
-end)
 
 local function stealthGui(g)
     local h = gethui and gethui()
@@ -206,12 +174,76 @@ local function applyHeadless(char, on)
         end
     end
     for _, acc in ipairs(headAccessories(char, parts)) do
-        for _, d in ipairs(acc:GetDescendants()) do
-            if d:IsA("BasePart") or d:IsA("Decal") then
-                if d:IsA("BasePart") then hookPart(d) end
-                setHidden(d, on)
+        if not acc:GetAttribute("VeniceHat") then
+            for _, d in ipairs(acc:GetDescendants()) do
+                if d:IsA("BasePart") or d:IsA("Decal") then
+                    if d:IsA("BasePart") then hookPart(d) end
+                    setHidden(d, on)
+                end
             end
         end
+    end
+end
+
+-- ============================== шапка ==============================
+
+local hatTried = false
+
+local function clearHat()
+    local char = LP.Character
+    if not char then return end
+    for _, d in ipairs(char:GetChildren()) do
+        if d:GetAttribute("VeniceHat") then pcall(function() d:Destroy() end) end
+    end
+end
+
+local function applyHat()
+    local char = LP.Character
+    local head = char and char:FindFirstChild("Head")
+    if not head or not head:IsA("BasePart") then return end
+    if char:FindFirstChild("VeniceHatDone") then return end
+
+    local marker = Instance.new("Folder")
+    marker.Name = "VeniceHatDone"
+    marker.Parent = char
+
+    local ok, objs = pcall(function() return game:GetObjects("rbxassetid://" .. HAT_ID) end)
+    if not ok or not objs or #objs == 0 then return end
+
+    local hat
+    for _, o in ipairs(objs) do
+        if o:IsA("Accessory") or o:IsA("Hat") then hat = o break end
+        for _, d in ipairs(o:GetDescendants()) do
+            if d:IsA("Accessory") or d:IsA("Hat") then hat = d break end
+        end
+        if hat then break end
+    end
+    if not hat then return end
+
+    local handle = hat:FindFirstChild("Handle")
+    if not handle or not handle:IsA("BasePart") then return end
+
+    hat:SetAttribute("VeniceHat", true)
+    handle.CanCollide = false
+    pcall(function() handle.Massless = true end)
+    handle.CastShadow = true
+
+    local matched = false
+    for _, a in ipairs(handle:GetChildren()) do
+        if a:IsA("Attachment") then
+            local ha = head:FindFirstChild(a.Name)
+            if ha and ha:IsA("Attachment") then matched = true break end
+        end
+    end
+
+    hat.Parent = char
+
+    if not matched then
+        handle.CFrame = head.CFrame * CFrame.new(0, 0.28, 0)
+        local w = Instance.new("WeldConstraint")
+        w.Part0 = head
+        w.Part1 = handle
+        w.Parent = handle
     end
 end
 
@@ -435,152 +467,10 @@ track(WS:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
     applyFov()
 end))
 
--- ============================== движение ==============================
+-- ============================== прыжок ==============================
 
-local walkOrig  = setmetatable({}, { __mode = "k" })
-local humHooked = setmetatable({}, { __mode = "k" })
-local speedGuard = false
-local humCache = {}
-local humAt = 0
-local ownAt = 0
 local lastJump = 0
 local airJumps = 0
-
-local velRoot, velAtt, velLV = nil, nil, nil
-
-local function claimOwnership()
-    local char = LP.Character
-    local root = char and char:FindFirstChild("HumanoidRootPart")
-    if root and root:IsA("BasePart") then
-        pcall(function() root:SetNetworkOwner(LP) end)
-    end
-end
-
-local function ensureVel(root)
-    if velLV and velLV.Parent and velRoot == root and velAtt and velAtt.Parent == root then
-        return velLV
-    end
-    if velLV then pcall(function() velLV:Destroy() end) end
-    if velAtt then pcall(function() velAtt:Destroy() end) end
-    velLV, velAtt, velRoot = nil, nil, nil
-
-    local att = Instance.new("Attachment")
-    att.Name = "VeniceSpeedAttach"
-    att.Parent = root
-
-    local lv = Instance.new("LinearVelocity")
-    lv.Name = "VeniceSpeed"
-    lv.Attachment0 = att
-    pcall(function()
-        lv.ForceLimitMode = Enum.ForceLimitMode.Magnitude
-        lv.RelativeTo = Enum.ActuatorRelativeTo.World
-        lv.VelocityConstraintMode = Enum.VelocityConstraintMode.Vector
-    end)
-    lv.MaxForce = 1e7
-    lv.Parent = root
-
-    velRoot, velAtt, velLV = root, att, lv
-    return lv
-end
-
-local function applySpeed(hum)
-    if walkOrig[hum] == nil then walkOrig[hum] = hum.WalkSpeed end
-    if math.abs(hum.WalkSpeed - speedTarget) > 0.05 then
-        speedGuard = true
-        pcall(function() hum.WalkSpeed = speedTarget end)
-        speedGuard = false
-    end
-end
-
-local function restoreSpeed(hum)
-    local o = walkOrig[hum]
-    walkOrig[hum] = nil
-    if o then pcall(function() hum.WalkSpeed = o end) end
-end
-
-local function hookHum(hum)
-    if humHooked[hum] then return end
-    humHooked[hum] = true
-    track(hum:GetPropertyChangedSignal("WalkSpeed"):Connect(function()
-        if speedGuard or not CONFIG.speed then return end
-        if math.abs(hum.WalkSpeed - speedTarget) > 0.05 then
-            speedGuard = true
-            pcall(function() hum.WalkSpeed = speedTarget end)
-            speedGuard = false
-        end
-    end))
-end
-
-local function keyDir()
-    local cam = WS.CurrentCamera
-    if not cam then return Vector3.zero end
-    local look = cam.CFrame.LookVector
-    local right = cam.CFrame.RightVector
-    look = Vector3.new(look.X, 0, look.Z)
-    right = Vector3.new(right.X, 0, right.Z)
-    local d = Vector3.zero
-    if UIS:IsKeyDown(Enum.KeyCode.W) then d = d + look end
-    if UIS:IsKeyDown(Enum.KeyCode.S) then d = d - look end
-    if UIS:IsKeyDown(Enum.KeyCode.D) then d = d + right end
-    if UIS:IsKeyDown(Enum.KeyCode.A) then d = d - right end
-    if d.Magnitude > 0.01 then return d.Unit end
-    return Vector3.zero
-end
-
-local function velStep(hum, dt)
-    local char = hum.Parent
-    if not char then return end
-    local root = hum.RootPart
-    if not root or root.Anchored then return end
-    if hum.Sit then return end
-    local st = hum:GetState()
-    if st == Enum.HumanoidStateType.Seated
-        or st == Enum.HumanoidStateType.PlatformStanding
-        or st == Enum.HumanoidStateType.Physics
-        or st == Enum.HumanoidStateType.Climbing then return end
-
-    local dir = hum.MoveDirection
-    if dir.Magnitude < 0.05 then dir = keyDir() end
-
-    local v = root.AssemblyLinearVelocity
-
-    if dir.Magnitude < 0.05 then
-        if velLV then velLV.Enabled = false end
-        return
-    end
-    dir = dir.Unit
-
-    if CONFIG.vel then
-        local lv = ensureVel(root)
-        if lv then
-            local y = v.Y
-            if hum.FloorMaterial == Enum.Material.Air then
-                y = y - WS.Gravity * dt
-            else
-                y = math.max(y - WS.Gravity * dt, -3)
-            end
-            lv.VectorVelocity = Vector3.new(dir.X * speedTarget, y, dir.Z * speedTarget)
-            lv.Enabled = true
-            return
-        end
-    end
-
-    local horiz = Vector3.new(v.X, 0, v.Z)
-    local mix = horiz:Lerp(dir * speedTarget, 0.35)
-    root.AssemblyLinearVelocity = Vector3.new(mix.X, v.Y, mix.Z)
-end
-
-local function refreshHums()
-    humAt = os.clock()
-    table.clear(humCache)
-    for _, char in ipairs(targets()) do
-        local hum = char:FindFirstChildOfClass("Humanoid")
-        if hum then
-            table.insert(humCache, hum)
-            hookHum(hum)
-        end
-    end
-end
 
 local function infJump()
     if not CONFIG.infJump then return end
@@ -618,24 +508,11 @@ end
 
 track(UIS.JumpRequest:Connect(function() pcall(infJump) end))
 
-track(RunS.Stepped:Connect(function(_, dt)
-    if not CONFIG.speed and not CONFIG.infJump then return end
-    if os.clock() - humAt > 0.25 then refreshHums() end
-    for _, hum in ipairs(humCache) do
-        if hum.Parent and hum.Health > 0 then
-            if hum.Parent == LP.Character and hum.FloorMaterial ~= Enum.Material.Air then
-                airJumps = 0
-            end
-            if CONFIG.speed then
-                applySpeed(hum)
-                if hum.Parent == LP.Character then velStep(hum, dt) end
-            end
-        end
-    end
-    if CONFIG.speed and os.clock() - ownAt > 1 then
-        ownAt = os.clock()
-        claimOwnership()
-    end
+track(RunS.Stepped:Connect(function()
+    if not CONFIG.infJump then return end
+    local char = LP.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    if hum and hum.FloorMaterial ~= Enum.Material.Air then airJumps = 0 end
 end))
 
 -- ============================== небо ==============================
@@ -773,6 +650,157 @@ track(Lighting.ChildAdded:Connect(function(d)
     end
 end))
 
+-- ============================== fps ==============================
+
+local orig = {}
+local killedFx = {}
+local killedParts = {}
+
+local function isEmitter(d)
+    return d:IsA("ParticleEmitter") or d:IsA("Beam") or d:IsA("Trail")
+        or d:IsA("Smoke") or d:IsA("Fire") or d:IsA("Sparkles")
+end
+
+local function capture()
+    if orig.done then return end
+    orig.done = true
+    pcall(function() orig.quality = settings().Rendering.QualityLevel end)
+    orig.shadows = Lighting.GlobalShadows
+    orig.diffuse = Lighting.EnvironmentDiffuseScale
+    orig.spec = Lighting.EnvironmentSpecularScale
+    local t = WS:FindFirstChildOfClass("Terrain")
+    if t then
+        orig.wave = t.WaterWaveSize
+        orig.refl = t.WaterReflectance
+        orig.deco = t.Decoration
+    end
+end
+
+local function killEmitter(d)
+    if not d.Enabled then return end
+    d.Enabled = false
+    table.insert(killedParts, d)
+end
+
+local function killFx(d)
+    if not d.Enabled then return end
+    d.Enabled = false
+    table.insert(killedFx, d)
+end
+
+local function setQuality(off)
+    if off then
+        capture()
+        pcall(function() settings().Rendering.QualityLevel = Enum.QualityLevel.Level01 end)
+    else
+        if not orig.done then return end
+        pcall(function() settings().Rendering.QualityLevel = orig.quality or Enum.QualityLevel.Automatic end)
+    end
+end
+
+local function setShadows(off)
+    if off then
+        capture()
+        Lighting.GlobalShadows = false
+        Lighting.EnvironmentDiffuseScale = 0
+        Lighting.EnvironmentSpecularScale = 0
+    else
+        if not orig.done then return end
+        Lighting.GlobalShadows = orig.shadows ~= false
+        Lighting.EnvironmentDiffuseScale = orig.diffuse or 1
+        Lighting.EnvironmentSpecularScale = orig.spec or 1
+    end
+end
+
+local function setPostFx(off)
+    if off then
+        for _, d in ipairs(Lighting:GetChildren()) do
+            if d:IsA("PostEffect") then killFx(d) end
+        end
+    else
+        for _, d in ipairs(killedFx) do
+            if d.Parent then pcall(function() d.Enabled = true end) end
+        end
+        table.clear(killedFx)
+    end
+end
+
+local function setParticles(off)
+    if off then
+        capture()
+        local n = 0
+        for _, d in ipairs(WS:GetDescendants()) do
+            if isEmitter(d) and d.Enabled then
+                d.Enabled = false
+                table.insert(killedParts, d)
+                n = n + 1
+                if n > 6000 then break end
+            end
+        end
+        pcall(function()
+            local t = WS:FindFirstChildOfClass("Terrain")
+            if t then
+                t.WaterWaveSize = 0
+                t.WaterReflectance = 0
+                t.Decoration = false
+            end
+        end)
+    else
+        for _, d in ipairs(killedParts) do
+            if d.Parent then pcall(function() d.Enabled = true end) end
+        end
+        table.clear(killedParts)
+        pcall(function()
+            local t = WS:FindFirstChildOfClass("Terrain")
+            if t then
+                if orig.wave ~= nil then t.WaterWaveSize = orig.wave end
+                if orig.refl ~= nil then t.WaterReflectance = orig.refl end
+                if orig.deco ~= nil then t.Decoration = orig.deco end
+            end
+        end)
+    end
+end
+
+local function setCap(v)
+    if setfpscap then pcall(setfpscap, FPS.boost and v or 9999) end
+end
+
+local function syncFps()
+    setQuality(FPS.boost)
+    setShadows(FPS.boost and FPS.shadowsOff)
+    setPostFx(FPS.boost and FPS.fxOff)
+    setParticles(FPS.boost and FPS.partsOff)
+    setCap(FPS.cap)
+end
+
+track(WS.DescendantAdded:Connect(function(d)
+    if not FPS.boost then return end
+    if FPS.partsOff and isEmitter(d) then
+        pcall(killEmitter, d)
+    end
+end))
+
+track(Lighting.ChildAdded:Connect(function(d)
+    if not FPS.boost then return end
+    if FPS.fxOff and d:IsA("PostEffect") then
+        pcall(killFx, d)
+    end
+end))
+
+-- добиваем то, что игра включила обратно
+task.spawn(function()
+    while true do
+        task.wait(2)
+        if not FPS.boost then continue end
+        for _, d in ipairs(killedParts) do
+            if d.Parent and d.Enabled then pcall(function() d.Enabled = false end) end
+        end
+        for _, d in ipairs(killedFx) do
+            if d.Parent and d.Enabled then pcall(function() d.Enabled = false end) end
+        end
+    end
+end)
+
 -- ============================== фиксация ==============================
 
 local function enforce()
@@ -791,6 +819,11 @@ local function enforce()
             end
             pcall(applyKorblox, char, true)
         end
+    end
+
+    if CONFIG.hat and LP.Character and not hatTried then
+        hatTried = true
+        task.spawn(function() pcall(applyHat) end)
     end
 
     pcall(cleanupParts, list)
@@ -826,8 +859,7 @@ local function watchChar(char)
     meshCache = nil
     cmMisses = 0
     airJumps = 0
-    velRoot, velAtt, velLV = nil, nil, nil
-    claimOwnership()
+    hatTried = false
     enforce()
     task.delay(0.25, enforce)
     task.delay(0.8, enforce)
@@ -843,7 +875,6 @@ local function watchChar(char)
 
     local hum = char:FindFirstChildOfClass("Humanoid")
     if hum then
-        hookHum(hum)
         track(hum.ChildAdded:Connect(function() task.defer(enforce) end))
         track(hum:GetPropertyChangedSignal("RigType"):Connect(function() task.defer(enforce) end))
     end
@@ -863,108 +894,6 @@ track(WS.ChildAdded:Connect(function(m)
         end)
     end
 end))
-
--- ============================== fps ==============================
-
-local saved = {}
-local killedFx = {}
-local killedParts = {}
-
-local function killAll(classList, store)
-    local n = 0
-    for _, d in ipairs(WS:GetDescendants()) do
-        if d:IsA(classList[1]) or (classList[2] and d:IsA(classList[2])) then
-            if d.Enabled then
-                d.Enabled = false
-                table.insert(store, d)
-                n = n + 1
-                if n > 4000 then break end
-            end
-        end
-    end
-end
-
-local function restore(list)
-    for _, d in ipairs(list) do
-        if d.Parent then pcall(function() d.Enabled = true end) end
-    end
-    table.clear(list)
-end
-
-local function setQuality(off)
-    if off then
-        pcall(function() saved.quality = settings().Rendering.QualityLevel end)
-        pcall(function() settings().Rendering.QualityLevel = Enum.QualityLevel.Level01 end)
-    else
-        pcall(function() settings().Rendering.QualityLevel = saved.quality or Enum.QualityLevel.Automatic end)
-    end
-end
-
-local function setShadows(off)
-    if off then
-        saved.shadows = Lighting.GlobalShadows
-        saved.diffuse = Lighting.EnvironmentDiffuseScale
-        saved.spec = Lighting.EnvironmentSpecularScale
-        Lighting.GlobalShadows = false
-        Lighting.EnvironmentDiffuseScale = 0
-        Lighting.EnvironmentSpecularScale = 0
-    else
-        Lighting.GlobalShadows = saved.shadows ~= false
-        Lighting.EnvironmentDiffuseScale = saved.diffuse or 1
-        Lighting.EnvironmentSpecularScale = saved.spec or 1
-    end
-end
-
-local function setPostFx(off)
-    if off then
-        for _, d in ipairs(Lighting:GetChildren()) do
-            if d:IsA("PostEffect") and d.Enabled then
-                d.Enabled = false
-                table.insert(killedFx, d)
-            end
-        end
-    else
-        restore(killedFx)
-    end
-end
-
-local function setParticles(off)
-    if off then
-        killAll({ "ParticleEmitter", "Beam" }, killedParts)
-        killAll({ "Trail", "Smoke" }, killedParts)
-        killAll({ "Fire", "Sparkles" }, killedParts)
-        pcall(function()
-            local t = WS:FindFirstChildOfClass("Terrain")
-            if t then
-                saved.waveSize = t.WaterWaveSize
-                t.WaterWaveSize = 0
-                t.WaterReflectance = 0
-                t.Decoration = false
-            end
-        end)
-    else
-        restore(killedParts)
-        pcall(function()
-            local t = WS:FindFirstChildOfClass("Terrain")
-            if t then
-                t.WaterWaveSize = saved.waveSize or 0.15
-                t.Decoration = true
-            end
-        end)
-    end
-end
-
-local function setCap(v)
-    if setfpscap then pcall(setfpscap, FPS.boost and v or 9999) end
-end
-
-local function syncFps()
-    setQuality(FPS.boost)
-    setShadows(FPS.boost and FPS.shadowsOff)
-    setPostFx(FPS.boost and FPS.fxOff)
-    setParticles(FPS.boost and FPS.partsOff)
-    setCap(FPS.cap)
-end
 
 -- ============================== меню ==============================
 
@@ -1158,7 +1087,7 @@ local function setOpen(force)
     end
 end
 
-local setHeadless, setKorblox, setForce, setBoost, setSpeed, setVel, setInf
+local setHeadless, setKorblox, setForce, setBoost, setHat, setInf
 
 local function build()
     gui = Instance.new("ScreenGui")
@@ -1232,43 +1161,21 @@ local function build()
         CONFIG.korblox = v
         for _, c in ipairs(targets()) do pcall(applyKorblox, c, v) end
     end)
+    setHat = row("Шапка Doomsekkar", CONFIG.hat, function(v)
+        CONFIG.hat = v
+        if v then
+            hatTried = true
+            task.spawn(function() pcall(applyHat) end)
+        else
+            pcall(clearHat)
+        end
+    end)
     setForce = row("Жёсткая фиксация", CONFIG.force, function(v)
         CONFIG.force = v
         enforce()
     end, 26)
 
     section("ДВИЖЕНИЕ")
-    setSpeed = row("Спидхак", CONFIG.speed, function(v)
-        CONFIG.speed = v
-        if v then
-            claimOwnership()
-            refreshHums()
-            for _, hum in ipairs(humCache) do
-                if hum.Parent then pcall(applySpeed, hum) end
-            end
-        else
-            table.clear(humCache)
-            if velLV then pcall(function() velLV:Destroy() end) end
-            if velAtt then pcall(function() velAtt:Destroy() end) end
-            velLV, velAtt, velRoot = nil, nil, nil
-            for _, c in ipairs(targets()) do
-                local hum = c:FindFirstChildOfClass("Humanoid")
-                if hum then pcall(restoreSpeed, hum) end
-            end
-        end
-    end)
-    setVel = row("Импульс (constraint)", CONFIG.vel, function(v)
-        CONFIG.vel = v
-        if not v and velLV then velLV.Enabled = false end
-    end, 26)
-    slider("Скорость", 16, 80, speedTarget, function(v)
-        speedTarget = v
-        if CONFIG.speed then
-            for _, hum in ipairs(humCache) do
-                if hum.Parent then pcall(applySpeed, hum) end
-            end
-        end
-    end, 1)
     setInf = row("Бесконечный прыжок", CONFIG.infJump, function(v)
         CONFIG.infJump = v
         airJumps = 0
@@ -1333,10 +1240,12 @@ local function build()
         if setHeadless then setHeadless(true) end
         if setKorblox then setKorblox(true) end
         if setForce then setForce(true) end
+        if CONFIG.hat then
+            hatTried = true
+            pcall(applyHat)
+        end
 
         refreshScan()
-        refreshHums()
-        claimOwnership()
         syncFps()
         if SKY.mode ~= "off" then pcall(applySky, SKY.mode) end
 
@@ -1357,18 +1266,9 @@ local function build()
         print("[Venice] риг:", hum and hum.RigType.Name or "нет")
         print("[Venice] weld-режим:", tostring(weldMode))
         print("[Venice] CreateMeshPartAsync:", meshCache and "ок" or "недоступен")
-        print("[Venice] хук WalkSpeed:", hookedSpeed and "есть" or "нет")
-        print("[Venice] спидхак:", CONFIG.speed and ("вкл " .. speedTarget) or "выкл", "импульс:", tostring(CONFIG.vel))
+        print("[Venice] шапка:", CONFIG.hat and (hatTried and "пробовал" or "ждёт") or "выкл")
         print("[Venice] инф.прыжок:", tostring(CONFIG.infJump), "лимит:", CONFIG.jumpLimit, "счётчик:", airJumps)
-        if hum then
-            local root = hum.RootPart
-            print("[Venice] walk:", hum.WalkSpeed, "vel:", root and root.AssemblyLinearVelocity.Magnitude or "-")
-            print("[Venice] MoveDirection:", tostring(hum.MoveDirection))
-            if root then
-                print("[Venice] owner:", tostring(root:GetNetworkOwner()))
-                print("[Venice] constraint:", velLV and tostring(velLV.Enabled) or "нет")
-            end
-        end
+        print("[Venice] fps:", tostring(FPS.boost), "частиц убито:", #killedParts, "эффектов:", #killedFx)
         print("[Venice] FOV:", tostring(fovTarget), "небо:", SKY.mode)
         if char then
             for _, d in ipairs(char:GetChildren()) do
@@ -1378,22 +1278,20 @@ local function build()
     end)
     button("Убрать всё", function()
         CONFIG.headless, CONFIG.korblox, CONFIG.force = false, false, false
-        CONFIG.speed, CONFIG.infJump = false, false
+        CONFIG.infJump, CONFIG.hat = false, false
         FPS.boost, FPS.shadowsOff, FPS.fxOff, FPS.partsOff = false, false, false, false
         if setHeadless then setHeadless(false) end
         if setKorblox then setKorblox(false) end
         if setForce then setForce(false) end
         if setBoost then setBoost(false) end
-        if setSpeed then setSpeed(false) end
         if setInf then setInf(false) end
+        if setHat then setHat(false) end
         syncFps()
-        table.clear(humCache)
         for _, c in ipairs(targets()) do
             pcall(applyHeadless, c, false)
             pcall(clearKorblox, c)
-            local hum = c:FindFirstChildOfClass("Humanoid")
-            if hum then pcall(restoreSpeed, hum) end
         end
+        pcall(clearHat)
         pcall(applySky, "off")
         fovTarget = 70
         pcall(applyFov)
@@ -1422,14 +1320,12 @@ local function build()
     gui.Destroying:Connect(function()
         pcall(function() RunS:UnbindFromRenderStep("VeniceEnforce") end)
         pcall(function() CAS:UnbindAction("VeniceMenu") end)
-        if velLV then pcall(function() velLV:Destroy() end) end
-        if velAtt then pcall(function() velAtt:Destroy() end) end
         if partsFolder then
             for _, o in ipairs(partsFolder:GetChildren()) do pcall(function() o:Destroy() end) end
         end
     end)
 
-    print("[Venice] v15 · Z меню")
+    print("[Venice] v16 · Z меню")
 end
 
 build()
