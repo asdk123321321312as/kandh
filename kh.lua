@@ -96,7 +96,8 @@ end
 -- ============================== откат свойств ==============================
 
 local hidingNow = false
-local hooked = {}
+local hooked = setmetatable({}, { __mode = "k" })
+local ATTR = "VeniceOrigT"
 
 local function hookPart(p)
     if hooked[p] then return end
@@ -111,19 +112,24 @@ local function hookPart(p)
     end))
 end
 
-local hiddenOrig = {}
-
 local function setHidden(inst, on)
     if not inst then return end
     if on then
-        if hiddenOrig[inst] == nil then hiddenOrig[inst] = inst.Transparency end
-        if inst.Transparency ~= 1 then inst.Transparency = 1 end
-    else
-        local o = hiddenOrig[inst]
-        if o ~= nil then
-            pcall(function() inst.Transparency = o end)
-            hiddenOrig[inst] = nil
+        if inst:GetAttribute(ATTR) == nil then
+            pcall(function() inst:SetAttribute(ATTR, inst.Transparency) end)
         end
+        if inst.Transparency ~= 1 then
+            hidingNow = true
+            pcall(function() inst.Transparency = 1 end)
+            hidingNow = false
+        end
+    else
+        local o = inst:GetAttribute(ATTR)
+        if o == nil then o = 0 end
+        hidingNow = true
+        pcall(function() inst.Transparency = o end)
+        hidingNow = false
+        pcall(function() inst:SetAttribute(ATTR, nil) end)
     end
 end
 
@@ -638,8 +644,6 @@ if not BOUND then
 end
 
 local function watchChar(char)
-    table.clear(hiddenOrig)
-    table.clear(hooked)
     meshCache = nil
     cmMisses = 0
     enforce()
@@ -1120,13 +1124,18 @@ local function build()
     end, 5)
 
     section("ПРОЧЕЕ")
+    button("Вернуть голову", function()
+        CONFIG.headless = false
+        if setHeadless then setHeadless(false) end
+        for _, c in ipairs(targets()) do pcall(applyHeadless, c, false) end
+        enforce()
+    end)
     button("Переприменить", function()
         CONFIG.headless, CONFIG.korblox, CONFIG.force = true, true, true
         if setHeadless then setHeadless(true) end
         if setKorblox then setKorblox(true) end
         if setForce then setForce(true) end
 
-        table.clear(hiddenOrig)
         refreshScan()
         refreshHums()
         syncFps()
@@ -1207,7 +1216,7 @@ local function build()
         end
     end)
 
-    print("[Venice] v12 · Z меню")
+    print("[Venice] v13 · Z меню")
 end
 
 build()
