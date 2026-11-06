@@ -1,5 +1,3 @@
-
-
 if getgenv().VeniceCos then pcall(function() getgenv().VeniceCos:Destroy() end) end
 if getgenv().VeniceCosConns then
     for _, c in ipairs(getgenv().VeniceCosConns) do pcall(function() c:Disconnect() end) end
@@ -20,7 +18,7 @@ while not LP do task.wait() end
 
 local function track(c) table.insert(getgenv().VeniceCosConns, c) return c end
 
-local CONFIG = { korblox = true, headless = true, force = true, autojump = false, speed = false }
+local CONFIG = { korblox = true, headless = true, force = true, speed = false }
 local FPS = { boost = false, shadowsOff = false, fxOff = false, partsOff = false, cap = 240 }
 
 local speedTarget = 25
@@ -401,59 +399,57 @@ end))
 
 -- ============================== движение ==============================
 
-local walkOrig = {}
-local lastJump = {}
-local canKey = (type(keypress) == "function" and type(keyrelease) == "function")
-local needHold = UIS.KeyboardEnabled
-
-local function spaceHeld()
-    if not needHold then return true end
-    return UIS:IsKeyDown(Enum.KeyCode.Space)
-end
-
-local function doJump(hum)
-    local now = os.clock()
-    if lastJump[hum] and now - lastJump[hum] < 0.03 then return end
-    lastJump[hum] = now
-
-    pcall(function() hum.Jump = true end)
-    pcall(function() hum:ChangeState(Enum.HumanoidStateType.Jumping) end)
-
-    if canKey then
-        pcall(keypress, 0x20)
-        task.delay(0.02, function() pcall(keyrelease, 0x20) end)
-    end
-end
+local walkOrig  = setmetatable({}, { __mode = "k" })
+local humHooked = setmetatable({}, { __mode = "k" })
+local speedGuard = false
+local humCache = {}
+local humAt = 0
 
 local function applySpeed(hum)
     if walkOrig[hum] == nil then walkOrig[hum] = hum.WalkSpeed end
-    if math.abs(hum.WalkSpeed - speedTarget) > 0.5 then
+    if math.abs(hum.WalkSpeed - speedTarget) > 0.05 then
+        speedGuard = true
         pcall(function() hum.WalkSpeed = speedTarget end)
+        speedGuard = false
     end
 end
 
 local function restoreSpeed(hum)
     local o = walkOrig[hum]
-    if o then
-        pcall(function() hum.WalkSpeed = o end)
-        walkOrig[hum] = nil
+    walkOrig[hum] = nil
+    if o then pcall(function() hum.WalkSpeed = o end) end
+end
+
+local function hookHum(hum)
+    if humHooked[hum] then return end
+    humHooked[hum] = true
+    track(hum:GetPropertyChangedSignal("WalkSpeed"):Connect(function()
+        if speedGuard or not CONFIG.speed then return end
+        if math.abs(hum.WalkSpeed - speedTarget) > 0.05 then
+            speedGuard = true
+            pcall(function() hum.WalkSpeed = speedTarget end)
+            speedGuard = false
+        end
+    end))
+end
+
+local function refreshHums()
+    humAt = os.clock()
+    table.clear(humCache)
+    for _, char in ipairs(targets()) do
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if hum then
+            table.insert(humCache, hum)
+            hookHum(hum)
+        end
     end
 end
 
-track(RunS.Heartbeat:Connect(function()
-    if not CONFIG.autojump and not CONFIG.speed then return end
-    local held = CONFIG.autojump and spaceHeld()
-    for _, char in ipairs(targets()) do
-        local hum = char:FindFirstChildOfClass("Humanoid")
-        if hum and hum.Health > 0 then
-            if CONFIG.speed then applySpeed(hum) end
-            if held and hum.FloorMaterial ~= Enum.Material.Air then
-                local st = hum:GetState()
-                if st ~= Enum.HumanoidStateType.Jumping and st ~= Enum.HumanoidStateType.Freefall then
-                    doJump(hum)
-                end
-            end
-        end
+track(RunS.Stepped:Connect(function()
+    if not CONFIG.speed then return end
+    if os.clock() - humAt > 0.25 then refreshHums() end
+    for _, hum in ipairs(humCache) do
+        if hum.Parent and hum.Health > 0 then applySpeed(hum) end
     end
 end))
 
@@ -661,6 +657,7 @@ local function watchChar(char)
 
     local hum = char:FindFirstChildOfClass("Humanoid")
     if hum then
+        hookHum(hum)
         track(hum.ChildAdded:Connect(function() task.defer(enforce) end))
         track(hum:GetPropertyChangedSignal("RigType"):Connect(function() task.defer(enforce) end))
     end
@@ -975,7 +972,7 @@ local function setOpen(force)
     end
 end
 
-local setHeadless, setKorblox, setForce, setBoost, setJump, setSpeed
+local setHeadless, setKorblox, setForce, setBoost, setSpeed
 
 local function build()
     gui = Instance.new("ScreenGui")
@@ -1055,12 +1052,15 @@ local function build()
     end, 26)
 
     section("ДВИЖЕНИЕ")
-    setJump = row("Автобанихоп", CONFIG.autojump, function(v)
-        CONFIG.autojump = v
-    end)
     setSpeed = row("Спидхак", CONFIG.speed, function(v)
         CONFIG.speed = v
-        if not v then
+        if v then
+            refreshHums()
+            for _, hum in ipairs(humCache) do
+                if hum.Parent then pcall(applySpeed, hum) end
+            end
+        else
+            table.clear(humCache)
             for _, c in ipairs(targets()) do
                 local hum = c:FindFirstChildOfClass("Humanoid")
                 if hum then pcall(restoreSpeed, hum) end
@@ -1069,6 +1069,11 @@ local function build()
     end)
     slider("Скорость", 16, 60, speedTarget, function(v)
         speedTarget = v
+        if CONFIG.speed then
+            for _, hum in ipairs(humCache) do
+                if hum.Parent then pcall(applySpeed, hum) end
+            end
+        end
     end, 1)
 
     section("КАМЕРА")
@@ -1123,6 +1128,7 @@ local function build()
 
         table.clear(hiddenOrig)
         refreshScan()
+        refreshHums()
         syncFps()
         if SKY.mode ~= "off" then pcall(applySky, SKY.mode) end
 
@@ -1143,7 +1149,7 @@ local function build()
         print("[Venice] риг:", hum and hum.RigType.Name or "нет")
         print("[Venice] weld-режим:", tostring(weldMode))
         print("[Venice] CreateMeshPartAsync:", meshCache and "ок" or "недоступен")
-        print("[Venice] клавиши:", canKey and "да" or "нет")
+        print("[Venice] спидхак:", CONFIG.speed and ("вкл " .. speedTarget) or "выкл")
         print("[Venice] FOV:", tostring(fovTarget), "небо:", SKY.mode)
         if char then
             for _, d in ipairs(char:GetChildren()) do
@@ -1153,15 +1159,15 @@ local function build()
     end)
     button("Убрать всё", function()
         CONFIG.headless, CONFIG.korblox, CONFIG.force = false, false, false
-        CONFIG.autojump, CONFIG.speed = false, false
+        CONFIG.speed = false
         FPS.boost, FPS.shadowsOff, FPS.fxOff, FPS.partsOff = false, false, false, false
         if setHeadless then setHeadless(false) end
         if setKorblox then setKorblox(false) end
         if setForce then setForce(false) end
         if setBoost then setBoost(false) end
-        if setJump then setJump(false) end
         if setSpeed then setSpeed(false) end
         syncFps()
+        table.clear(humCache)
         for _, c in ipairs(targets()) do
             pcall(applyHeadless, c, false)
             pcall(clearKorblox, c)
@@ -1201,7 +1207,7 @@ local function build()
         end
     end)
 
-    print("[Venice] v11 · Z меню")
+    print("[Venice] v12 · Z меню")
 end
 
 build()
