@@ -1,6 +1,6 @@
---[[ Venice · Korblox + Headless + FPS + FOV + Sky · v6 universal
+--[[ Venice · Korblox + Headless + FPS + FOV + Sky · v7 evade-hardened
      H — голова, K — коробокс, F — буст, Z — меню
-     v6: RenderStep-фиксация, weld-фолбэк R6, перехват подмены головы, FOV, небо ]]
+     v7: меш в workspace, синхронный откат свойств, CAS-клавиши ]]
 
 if getgenv().VeniceCos then pcall(function() getgenv().VeniceCos:Destroy() end) end
 if getgenv().VeniceCosConns then
@@ -15,6 +15,7 @@ local TweenS   = ref(game:GetService("TweenService"))
 local Lighting = ref(game:GetService("Lighting"))
 local AssetS   = ref(game:GetService("AssetService"))
 local RunS     = ref(game:GetService("RunService"))
+local CAS      = ref(game:GetService("ContextActionService"))
 local WS       = ref(workspace)
 local LP       = Players.LocalPlayer
 while not LP do task.wait() end
@@ -46,7 +47,23 @@ local function stealthGui(g)
     return pcall(function() g.Parent = game:GetService("CoreGui") end)
 end
 
--- ============================== скрытие / восстановление ==============================
+-- ============================== откат свойств ==============================
+
+local hidingNow = false
+local hooked = {}
+
+local function hookPart(p)
+    if hooked[p] then return end
+    hooked[p] = true
+    track(p:GetPropertyChangedSignal("Transparency"):Connect(function()
+        if hidingNow then return end
+        if CONFIG.headless and p.Transparency ~= 1 then
+            hidingNow = true
+            pcall(function() p.Transparency = 1 end)
+            hidingNow = false
+        end
+    end))
+end
 
 local hiddenOrig = {}
 
@@ -99,6 +116,7 @@ local function applyHeadless(on)
     if #parts == 0 then return end
 
     for _, p in ipairs(parts) do
+        hookPart(p)
         setHidden(p, on)
         for _, d in ipairs(p:GetDescendants()) do
             if d:IsA("Decal") then setHidden(d, on) end
@@ -106,7 +124,10 @@ local function applyHeadless(on)
     end
     for _, acc in ipairs(headAccessories(char, parts)) do
         for _, d in ipairs(acc:GetDescendants()) do
-            if d:IsA("BasePart") or d:IsA("Decal") then setHidden(d, on) end
+            if d:IsA("BasePart") or d:IsA("Decal") then
+                if d:IsA("BasePart") then hookPart(d) end
+                setHidden(d, on)
+            end
         end
     end
 end
@@ -117,6 +138,20 @@ local meshCache = nil
 local savedCharMesh = nil
 local weldMode = false
 local cmMisses = 0
+local partsFolder = nil
+
+local function getFolder()
+    if partsFolder and partsFolder.Parent then return partsFolder end
+    local f = WS:FindFirstChild("VeniceCosParts")
+    if not f then
+        f = Instance.new("Folder")
+        f.Name = "VeniceCosParts"
+        f.Archivable = false
+        f.Parent = WS
+    end
+    partsFolder = f
+    return f
+end
 
 local function findLegParts(char)
     local upper = char:FindFirstChild("RightUpperLeg") or char:FindFirstChild("Right Leg") or char:FindFirstChild("RightLeg")
@@ -138,6 +173,7 @@ end
 local function korbloxOk(char)
     if char:FindFirstChild("VeniceKorblox") then return true end
     local p = char:FindFirstChild("VeniceKorbloxLeg")
+    if not p and partsFolder then p = partsFolder:FindFirstChild("VeniceKorbloxLeg") end
     if not p or not p:IsA("BasePart") then return false end
     local w = p:FindFirstChildWhichIsA("WeldConstraint") or p:FindFirstChildWhichIsA("Weld")
     if not w or not w.Part1 or not w.Part1:IsDescendantOf(char) then return false end
@@ -146,11 +182,17 @@ end
 
 local function clearKorblox()
     local char = LP.Character
-    if not char then return end
     for _, n in ipairs({ "VeniceKorblox", "VeniceKorbloxLeg" }) do
-        local o = char:FindFirstChild(n)
-        if o then pcall(function() o:Destroy() end) end
+        if char then
+            local o = char:FindFirstChild(n)
+            if o then pcall(function() o:Destroy() end) end
+        end
+        if partsFolder then
+            local o = partsFolder:FindFirstChild(n)
+            if o then pcall(function() o:Destroy() end) end
+        end
     end
+    if not char then return end
     local upper, lower, foot = findLegParts(char)
     setHidden(upper, false)
     setHidden(lower, false)
@@ -222,7 +264,7 @@ local function buildKorbloxLeg(char, upper, lower, foot)
     pcall(function() part.Massless = true end)
     part.TopSurface = Enum.SurfaceType.Smooth
     part.BottomSurface = Enum.SurfaceType.Smooth
-    part.Parent = char
+    part.Parent = getFolder()
 
     local weld = Instance.new("WeldConstraint")
     weld.Part0 = part
@@ -264,6 +306,10 @@ local function applyKorblox(on)
 
     local stale = char:FindFirstChild("VeniceKorbloxLeg")
     if stale then pcall(function() stale:Destroy() end) end
+    if partsFolder then
+        local o = partsFolder:FindFirstChild("VeniceKorbloxLeg")
+        if o then pcall(function() o:Destroy() end) end
+    end
 
     local upper, lower, foot = findLegParts(char)
     if not upper then return end
@@ -273,16 +319,35 @@ end
 -- ============================== fov ==============================
 
 local fovTarget = 70
+local fovWriting = false
 
 local function applyFov()
     local cam = WS.CurrentCamera
     if not cam then return end
     if math.abs(cam.FieldOfView - fovTarget) > 0.2 then
+        fovWriting = true
         pcall(function() cam.FieldOfView = fovTarget end)
+        fovWriting = false
     end
 end
 
-track(WS:GetPropertyChangedSignal("CurrentCamera"):Connect(applyFov))
+local function bindCam(cam)
+    if not cam then return end
+    track(cam:GetPropertyChangedSignal("FieldOfView"):Connect(function()
+        if fovWriting then return end
+        if math.abs(cam.FieldOfView - fovTarget) > 0.2 then
+            fovWriting = true
+            pcall(function() cam.FieldOfView = fovTarget end)
+            fovWriting = false
+        end
+    end))
+end
+
+bindCam(WS.CurrentCamera)
+track(WS:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
+    bindCam(WS.CurrentCamera)
+    applyFov()
+end))
 
 -- ============================== небо ==============================
 
@@ -378,7 +443,7 @@ local function syncSky()
     if SKY.mode == "void" then
         if ourSky then pcall(function() ourSky:Destroy() end) ourSky = nil end
         local s = Lighting:FindFirstChildOfClass("Sky")
-        if s and s ~= skySaved.sky then pcall(function() s.Parent = nil end) end
+        if s and s ~= (skySaved and skySaved.sky) then pcall(function() s.Parent = nil end) end
         if Lighting.FogEnd ~= SKY.fog then Lighting.FogEnd = SKY.fog end
         if Lighting.FogColor ~= SKY.tint then Lighting.FogColor = SKY.tint end
         return
@@ -393,6 +458,15 @@ local function syncSky()
     if Lighting.FogColor ~= SKY.tint then Lighting.FogColor = SKY.tint end
 end
 
+track(Lighting.ChildAdded:Connect(function(d)
+    if SKY.mode == "off" then return end
+    if d:IsA("Sky") and d ~= ourSky then
+        task.defer(function()
+            if SKY.mode ~= "off" and d.Parent then pcall(function() d.Parent = nil end) end
+        end)
+    end
+end))
+
 -- ============================== фиксация ==============================
 
 local function enforce()
@@ -406,7 +480,7 @@ local function enforce()
             local hum = char:FindFirstChildOfClass("Humanoid")
             if hum and hum.RigType == Enum.HumanoidRigType.R6 and not char:FindFirstChild("VeniceKorblox") then
                 cmMisses = cmMisses + 1
-                if cmMisses >= 5 then weldMode = true end
+                if cmMisses >= 3 then weldMode = true end
             end
         end
         pcall(applyKorblox, true)
@@ -441,24 +515,19 @@ if not BOUND then
 end
 
 local function watchHead(char)
-    local parts, head = headParts(char)
-    for _, p in ipairs(parts) do
-        track(p:GetPropertyChangedSignal("Transparency"):Connect(function()
-            if CONFIG.headless and p.Transparency ~= 1 then p.Transparency = 1 end
-        end))
-    end
-    if head and head:IsA("Model") then
-        track(head.DescendantAdded:Connect(function(d)
-            if CONFIG.headless and (d:IsA("BasePart") or d:IsA("Decal")) then setHidden(d, true) end
-        end))
-    end
+    local parts = headParts(char)
+    for _, p in ipairs(parts) do hookPart(p) end
 end
 
 local function watchChar(char)
     table.clear(hiddenOrig)
+    table.clear(hooked)
     meshCache = nil
     savedCharMesh = nil
     cmMisses = 0
+    if partsFolder then
+        for _, o in ipairs(partsFolder:GetChildren()) do pcall(function() o:Destroy() end) end
+    end
     enforce()
     task.delay(0.25, enforce)
     task.delay(0.8, enforce)
@@ -466,6 +535,7 @@ local function watchChar(char)
 
     track(char.DescendantAdded:Connect(function(d)
         if d:IsA("BasePart") or d:IsA("Accessory") or d:IsA("Hat") or d:IsA("Decal") or d:IsA("CharacterMesh") then
+            if d:IsA("BasePart") then hookPart(d) end
             task.defer(enforce)
             if d.Name == "Head" then task.defer(watchHead, char) end
         end
@@ -789,7 +859,7 @@ local function build()
     gui.Name = "VeniceCos"
     gui.ResetOnSpawn = false
     gui.IgnoreGuiInset = true
-    gui.DisplayOrder = 999
+    gui.DisplayOrder = 1000000
     gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
     getgenv().VeniceCos = gui
     if not stealthGui(gui) then gui.Parent = LP:WaitForChild("PlayerGui") end
@@ -935,6 +1005,7 @@ local function build()
         print("[Venice] риг:", hum and hum.RigType.Name or "нет")
         print("[Venice] weld-режим:", tostring(weldMode))
         print("[Venice] CreateMeshPartAsync:", meshCache and "ок" or "недоступен")
+        print("[Venice] папка частей:", partsFolder and "есть" or "нет")
         local parts = char and headParts(char) or {}
         print("[Venice] частей головы:", #parts)
         print("[Venice] аксессуаров на голове:", char and #headAccessories(char, parts) or 0)
@@ -982,32 +1053,54 @@ local function build()
 
     gui.Destroying:Connect(function()
         pcall(function() RunS:UnbindFromRenderStep("VeniceEnforce") end)
+        pcall(function() CAS:UnbindAction("VeniceKeys") end)
+        if partsFolder then
+            for _, o in ipairs(partsFolder:GetChildren()) do pcall(function() o:Destroy() end) end
+        end
     end)
 
-    print("[Venice] v6 · H голова · K коробокс · F буст · Z меню")
+    print("[Venice] v7 · H голова · K коробокс · F буст · Z меню")
 end
 
 build()
 
-track(UIS.InputBegan:Connect(function(i, gp)
-    if gp or UIS:GetFocusedTextBox() then return end
-    if i.KeyCode == Enum.KeyCode.H then
+-- ============================== клавиши ==============================
+
+local function handleKey(code)
+    if code == Enum.KeyCode.H then
         CONFIG.headless = not CONFIG.headless
         if setHeadless then setHeadless(CONFIG.headless) end
         pcall(applyHeadless, CONFIG.headless)
-    elseif i.KeyCode == Enum.KeyCode.K then
+    elseif code == Enum.KeyCode.K then
         CONFIG.korblox = not CONFIG.korblox
         if setKorblox then setKorblox(CONFIG.korblox) end
         pcall(applyKorblox, CONFIG.korblox)
-    elseif i.KeyCode == Enum.KeyCode.F then
+    elseif code == Enum.KeyCode.F then
         FPS.boost = not FPS.boost
         if FPS.boost then FPS.shadowsOff, FPS.fxOff, FPS.partsOff = true, true, true end
         if setBoost then setBoost(FPS.boost) end
         syncFps()
-    elseif i.KeyCode == Enum.KeyCode.Z then
+    elseif code == Enum.KeyCode.Z then
         setOpen()
     end
-end))
+end
+
+local CAS_OK = pcall(function()
+    CAS:BindActionAtPriority("VeniceKeys", function(_, state, input)
+        if state ~= Enum.UserInputState.Begin then return Enum.ContextActionResult.Pass end
+        if UIS:GetFocusedTextBox() then return Enum.ContextActionResult.Pass end
+        handleKey(input.KeyCode)
+        return Enum.ContextActionResult.Sink
+    end, false, Enum.ContextActionPriority.High.Value,
+        Enum.KeyCode.H, Enum.KeyCode.K, Enum.KeyCode.F, Enum.KeyCode.Z)
+end)
+
+if not CAS_OK then
+    track(UIS.InputBegan:Connect(function(i, gp)
+        if gp or UIS:GetFocusedTextBox() then return end
+        handleKey(i.KeyCode)
+    end))
+end
 
 task.wait(1.2)
 enforce()
