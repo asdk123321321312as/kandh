@@ -1,7 +1,7 @@
---[[ Venice · Korblox + Headless + FPS · v4 universal
+--[[ Venice · Korblox + Headless + FPS · v5 universal
      R6 / R15 / кастомные риги
      H — голова, K — коробокс, F — буст, Z — меню
-     v4: аксессуары, восстановление оригиналов, валидация, force-режим ]]
+     v5: событийная фиксация, рабочее «Переприменить», Head как Model ]]
 
 if getgenv().VeniceCos then pcall(function() getgenv().VeniceCos:Destroy() end) end
 if getgenv().VeniceCosConns then
@@ -21,7 +21,7 @@ while not LP do task.wait() end
 
 local function track(c) table.insert(getgenv().VeniceCosConns, c) return c end
 
-local CONFIG = { korblox = true, headless = true, force = false }
+local CONFIG = { korblox = true, headless = true, force = true }
 local FPS = { boost = false, shadowsOff = false, fxOff = false, partsOff = false, cap = 240 }
 
 local MESH = "rbxassetid://101851696"
@@ -30,6 +30,7 @@ local TEX  = "rbxassetid://101851254"
 local ACCENT = Color3.fromRGB(152, 132, 255)
 local BG     = Color3.fromRGB(9, 9, 11)
 local ROW    = Color3.fromRGB(23, 23, 28)
+local OFF    = Color3.fromRGB(45, 45, 54)
 local STROKE = Color3.fromRGB(41, 41, 49)
 local TEXT   = Color3.fromRGB(238, 238, 244)
 local SUB    = Color3.fromRGB(128, 128, 144)
@@ -65,12 +66,25 @@ end
 
 -- ============================== голова ==============================
 
-local function headAccessories(char, head)
+local function headParts(char)
+    local head = char:FindFirstChild("Head")
+    if not head then return {}, nil end
+    if head:IsA("BasePart") then return { head }, head end
+    local out = {}
+    for _, d in ipairs(head:GetDescendants()) do
+        if d:IsA("BasePart") then table.insert(out, d) end
+    end
+    return out, head
+end
+
+local function headAccessories(char, parts)
+    local set = {}
+    for _, p in ipairs(parts) do set[p] = true end
     local out = {}
     for _, d in ipairs(char:GetChildren()) do
         if d:IsA("Accessory") or d:IsA("Hat") then
             local w = d:FindFirstChildWhichIsA("Weld", true)
-            if w and (w.Part0 == head or w.Part1 == head) then
+            if w and (set[w.Part0] or set[w.Part1]) then
                 table.insert(out, d)
             end
         end
@@ -81,14 +95,16 @@ end
 local function applyHeadless(on)
     local char = LP.Character
     if not char then return end
-    local head = char:FindFirstChild("Head")
-    if not head then return end
+    local parts = headParts(char)
+    if #parts == 0 then return end
 
-    setHidden(head, on)
-    for _, d in ipairs(head:GetDescendants()) do
-        if d:IsA("Decal") then setHidden(d, on) end
+    for _, p in ipairs(parts) do
+        setHidden(p, on)
+        for _, d in ipairs(p:GetDescendants()) do
+            if d:IsA("Decal") then setHidden(d, on) end
+        end
     end
-    for _, acc in ipairs(headAccessories(char, head)) do
+    for _, acc in ipairs(headAccessories(char, parts)) do
         for _, d in ipairs(acc:GetDescendants()) do
             if d:IsA("BasePart") or d:IsA("Decal") then setHidden(d, on) end
         end
@@ -251,7 +267,7 @@ end
 
 local function enforce()
     local char = LP.Character
-    if not char or not LP:HasAppearanceLoaded() then return end
+    if not char then return end
     if CONFIG.headless then pcall(applyHeadless, true) end
     if CONFIG.korblox then pcall(applyKorblox, true) end
 end
@@ -269,18 +285,58 @@ track(RunS.Heartbeat:Connect(function(dt)
     end
 end))
 
-local function hookChar(char)
+local function watchHead(char)
+    local parts, head = headParts(char)
+    for _, p in ipairs(parts) do
+        track(p:GetPropertyChangedSignal("Transparency"):Connect(function()
+            if CONFIG.headless and p.Transparency ~= 1 then p.Transparency = 1 end
+        end))
+    end
+    if head and head:IsA("Model") then
+        track(head.DescendantAdded:Connect(function(d)
+            if d:IsA("BasePart") or d:IsA("Decal") then
+                if CONFIG.headless then setHidden(d, true) end
+            end
+        end))
+    end
+end
+
+local function watchChar(char)
     table.clear(hiddenOrig)
     meshCache = nil
     savedCharMesh = nil
-    task.delay(0.6, enforce)
-    track(char.DescendantAdded:Connect(function()
-        task.delay(0.05, enforce)
+    enforce()
+    task.delay(0.25, enforce)
+    task.delay(0.8, enforce)
+    task.delay(1.6, enforce)
+
+    track(char.DescendantAdded:Connect(function(d)
+        if d:IsA("BasePart") or d:IsA("Accessory") or d:IsA("Hat") or d:IsA("Decal") or d:IsA("CharacterMesh") then
+            task.defer(enforce)
+        end
     end))
+    track(char.AncestryChanged:Connect(function() task.defer(enforce) end))
+
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if hum then
+        track(hum.ChildAdded:Connect(function() task.defer(enforce) end))
+        track(hum:GetPropertyChangedSignal("RigType"):Connect(function() task.defer(enforce) end))
+        track(hum.Died:Connect(function()
+            task.delay(0.3, enforce)
+        end))
+    end
+
+    task.spawn(function()
+        local head = char:FindFirstChild("Head")
+        if not head then
+            head = char:WaitForChild("Head", 5)
+        end
+        if head then watchHead(char) end
+    end)
 end
 
-if LP.Character then hookChar(LP.Character) end
-track(LP.CharacterAdded:Connect(hookChar))
+if LP.Character then watchChar(LP.Character) end
+track(LP.CharacterAdded:Connect(watchChar))
 track(LP.CharacterAppearanceLoaded:Connect(enforce))
 
 -- ============================== fps ==============================
@@ -425,7 +481,7 @@ local function row(text, default, cb, h)
     local t = Instance.new("Frame")
     t.Size = UDim2.fromOffset(32, 16)
     t.Position = UDim2.new(1, -42, 0.5, -8)
-    t.BackgroundColor3 = default and ACCENT or Color3.fromRGB(45, 45, 54)
+    t.BackgroundColor3 = default and ACCENT or OFF
     t.BorderSizePixel = 0
     t.Parent = r
     Instance.new("UICorner", t).CornerRadius = UDim.new(1, 0)
@@ -439,6 +495,11 @@ local function row(text, default, cb, h)
     Instance.new("UICorner", k).CornerRadius = UDim.new(1, 0)
 
     local state = default
+    local function paint(v)
+        t.BackgroundColor3 = v and ACCENT or OFF
+        k.Position = v and UDim2.fromOffset(19, 3) or UDim2.fromOffset(3, 3)
+    end
+
     local btn = Instance.new("TextButton")
     btn.Size = UDim2.fromScale(1, 1)
     btn.BackgroundTransparency = 1
@@ -446,10 +507,15 @@ local function row(text, default, cb, h)
     btn.Parent = r
     btn.MouseButton1Click:Connect(function()
         state = not state
-        tw(t, 0.15, { BackgroundColor3 = state and ACCENT or Color3.fromRGB(45, 45, 54) })
-        tw(k, 0.15, { Position = state and UDim2.fromOffset(19, 3) or UDim2.fromOffset(3, 3) })
+        paint(state)
         task.spawn(function() pcall(cb, state) end)
     end)
+
+    return function(v)
+        state = v
+        paint(v)
+        task.spawn(function() pcall(cb, v) end)
+    end
 end
 
 local function button(text, cb)
@@ -514,7 +580,7 @@ local function slider(text, min, max, default, cb)
     local bar = Instance.new("Frame")
     bar.Size = UDim2.new(1, -20, 0, 4)
     bar.Position = UDim2.fromOffset(10, 27)
-    bar.BackgroundColor3 = Color3.fromRGB(45, 45, 54)
+    bar.BackgroundColor3 = OFF
     bar.BorderSizePixel = 0
     bar.Parent = r
     Instance.new("UICorner", bar).CornerRadius = UDim.new(1, 0)
@@ -565,6 +631,8 @@ local function setOpen(force)
     end
 end
 
+local setHeadless, setKorblox, setForce, setBoost
+
 local function build()
     gui = Instance.new("ScreenGui")
     gui.Name = "VeniceCos"
@@ -577,7 +645,7 @@ local function build()
 
     panel = Instance.new("Frame")
     panel.Position = UDim2.fromOffset(20, 90)
-    panel.Size = UDim2.fromOffset(206, 384)
+    panel.Size = UDim2.fromOffset(206, 396)
     panel.BackgroundColor3 = BG
     panel.BackgroundTransparency = 0.05
     panel.BorderSizePixel = 0
@@ -629,21 +697,21 @@ local function build()
     panel = body
 
     section("ВНЕШКА")
-    row("Headless", CONFIG.headless, function(v)
+    setHeadless = row("Headless", CONFIG.headless, function(v)
         CONFIG.headless = v
         pcall(applyHeadless, v)
     end)
-    row("Korblox", CONFIG.korblox, function(v)
+    setKorblox = row("Korblox", CONFIG.korblox, function(v)
         CONFIG.korblox = v
         pcall(applyKorblox, v)
     end)
-    row("Жёсткая фиксация", CONFIG.force, function(v)
+    setForce = row("Жёсткая фиксация", CONFIG.force, function(v)
         CONFIG.force = v
         enforce()
     end, 26)
 
     section("FPS")
-    row("FPS Boost", FPS.boost, function(v)
+    setBoost = row("FPS Boost", FPS.boost, function(v)
         FPS.boost = v
         if v then FPS.shadowsOff, FPS.fxOff, FPS.partsOff = true, true, true end
         syncFps()
@@ -667,14 +735,29 @@ local function build()
 
     section("ПРОЧЕЕ")
     button("Переприменить", function()
-        enforce()
+        CONFIG.headless, CONFIG.korblox, CONFIG.force = true, true, true
+        if setHeadless then setHeadless(true) end
+        if setKorblox then setKorblox(true) end
+        if setForce then setForce(true) end
+
+        if LP.Character then pcall(clearKorblox) end
+        table.clear(hiddenOrig)
+        syncFps()
+
+        for _ = 1, 6 do
+            task.wait(0.15)
+            enforce()
+        end
+        print("[Venice] переприменено")
     end)
     button("Диагностика", function()
         local char = LP.Character
         local hum = char and char:FindFirstChildOfClass("Humanoid")
         print("[Venice] риг:", hum and hum.RigType.Name or "нет")
         print("[Venice] CreateMeshPartAsync:", meshCache and "ок" or "недоступен")
-        print("[Venice] аксессуаров на голове:", char and #headAccessories(char, char:FindFirstChild("Head")) or 0)
+        local parts = char and headParts(char) or {}
+        print("[Venice] частей головы:", #parts)
+        print("[Venice] аксессуаров на голове:", char and #headAccessories(char, parts) or 0)
         if char then
             for _, d in ipairs(char:GetChildren()) do
                 if d:IsA("BasePart") then print("  ", d.Name, d.Size, d.Transparency) end
@@ -684,6 +767,10 @@ local function build()
     button("Убрать всё", function()
         CONFIG.headless, CONFIG.korblox, CONFIG.force = false, false, false
         FPS.boost, FPS.shadowsOff, FPS.fxOff, FPS.partsOff = false, false, false, false
+        if setHeadless then setHeadless(false) end
+        if setKorblox then setKorblox(false) end
+        if setForce then setForce(false) end
+        if setBoost then setBoost(false) end
         syncFps()
         pcall(applyHeadless, false)
         pcall(clearKorblox)
@@ -709,7 +796,7 @@ local function build()
         end
     end))
 
-    print("[Venice] v4 · H голова · K коробокс · F буст · Z меню")
+    print("[Venice] v5 · H голова · K коробокс · F буст · Z меню")
 end
 
 build()
@@ -718,13 +805,16 @@ track(UIS.InputBegan:Connect(function(i, gp)
     if gp or UIS:GetFocusedTextBox() then return end
     if i.KeyCode == Enum.KeyCode.H then
         CONFIG.headless = not CONFIG.headless
+        if setHeadless then setHeadless(CONFIG.headless) end
         pcall(applyHeadless, CONFIG.headless)
     elseif i.KeyCode == Enum.KeyCode.K then
         CONFIG.korblox = not CONFIG.korblox
+        if setKorblox then setKorblox(CONFIG.korblox) end
         pcall(applyKorblox, CONFIG.korblox)
     elseif i.KeyCode == Enum.KeyCode.F then
         FPS.boost = not FPS.boost
         if FPS.boost then FPS.shadowsOff, FPS.fxOff, FPS.partsOff = true, true, true end
+        if setBoost then setBoost(FPS.boost) end
         syncFps()
     elseif i.KeyCode == Enum.KeyCode.Z then
         setOpen()
