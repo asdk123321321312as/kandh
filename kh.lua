@@ -187,7 +187,18 @@ end
 
 -- ============================== шапка ==============================
 
-local hatTried = false
+local hatBusy = false
+local hatAt = 0
+local hatLast = "не запускалось"
+
+local function hasHat()
+    local char = LP.Character
+    if not char then return false end
+    for _, d in ipairs(char:GetChildren()) do
+        if d:GetAttribute("VeniceHat") then return true end
+    end
+    return false
+end
 
 local function clearHat()
     local char = LP.Character
@@ -197,54 +208,89 @@ local function clearHat()
     end
 end
 
+local function loadHat()
+    local ok, objs = pcall(function() return game:GetObjects("rbxassetid://" .. HAT_ID) end)
+    if ok and objs then
+        for _, o in ipairs(objs) do
+            if o:IsA("Accessory") or o:IsA("Hat") then return o end
+            for _, d in ipairs(o:GetDescendants()) do
+                if d:IsA("Accessory") or d:IsA("Hat") then return d end
+            end
+        end
+        for _, o in ipairs(objs) do
+            if o:IsA("BasePart") and o.Name == "Handle" then return o end
+            for _, d in ipairs(o:GetDescendants()) do
+                if d:IsA("BasePart") and d.Name == "Handle" then return d end
+            end
+        end
+    end
+
+    local ok2, model = pcall(function() return game:GetService("InsertService"):LoadAsset(HAT_ID) end)
+    if ok2 and model then
+        for _, d in ipairs(model:GetDescendants()) do
+            if d:IsA("Accessory") or d:IsA("Hat") then return d end
+        end
+        for _, d in ipairs(model:GetDescendants()) do
+            if d:IsA("BasePart") and d.Name == "Handle" then return d end
+        end
+    end
+    return nil
+end
+
 local function applyHat()
+    if hatBusy then return end
     local char = LP.Character
     local head = char and char:FindFirstChild("Head")
-    if not head or not head:IsA("BasePart") then return end
-    if char:FindFirstChild("VeniceHatDone") then return end
+    if not head or not head:IsA("BasePart") then hatLast = "нет головы" return end
+    if hasHat() then return end
+    hatBusy = true
 
-    local marker = Instance.new("Folder")
-    marker.Name = "VeniceHatDone"
-    marker.Parent = char
+    local ok, res = pcall(function()
+        local found = loadHat()
+        if not found then error("ассет не загрузился") end
 
-    local ok, objs = pcall(function() return game:GetObjects("rbxassetid://" .. HAT_ID) end)
-    if not ok or not objs or #objs == 0 then return end
-
-    local hat
-    for _, o in ipairs(objs) do
-        if o:IsA("Accessory") or o:IsA("Hat") then hat = o break end
-        for _, d in ipairs(o:GetDescendants()) do
-            if d:IsA("Accessory") or d:IsA("Hat") then hat = d break end
+        local acc, handle
+        if found:IsA("Accessory") or found:IsA("Hat") then
+            acc = found
+            handle = acc:FindFirstChild("Handle") or acc:FindFirstChildWhichIsA("BasePart", true)
+        else
+            handle = found
+            acc = Instance.new("Accessory")
+            acc.Name = "VeniceHat"
+            pcall(function() acc.AccessoryType = Enum.AccessoryType.Hat end)
+            handle.Name = "Handle"
+            handle.Parent = acc
         end
-        if hat then break end
-    end
-    if not hat then return end
+        if not handle then error("в ассете нет Handle") end
 
-    local handle = hat:FindFirstChild("Handle")
-    if not handle or not handle:IsA("BasePart") then return end
+        acc:SetAttribute("VeniceHat", true)
+        handle.Anchored = false
+        handle.CanCollide = false
+        handle.CanQuery = false
+        pcall(function() handle.Massless = true end)
+        handle.CastShadow = true
 
-    hat:SetAttribute("VeniceHat", true)
-    handle.CanCollide = false
-    pcall(function() handle.Massless = true end)
-    handle.CastShadow = true
-
-    local matched = false
-    for _, a in ipairs(handle:GetChildren()) do
-        if a:IsA("Attachment") then
-            local ha = head:FindFirstChild(a.Name)
-            if ha and ha:IsA("Attachment") then matched = true break end
+        local matched = false
+        for _, a in ipairs(handle:GetChildren()) do
+            if a:IsA("Attachment") then
+                local ha = head:FindFirstChild(a.Name)
+                if ha and ha:IsA("Attachment") then matched = true break end
+            end
         end
-    end
 
-    hat.Parent = char
+        acc.Parent = char
+        if not matched then
+            handle.CFrame = head.CFrame * CFrame.new(0, 0.35, 0)
+            local w = Instance.new("WeldConstraint")
+            w.Part0 = head
+            w.Part1 = handle
+            w.Parent = handle
+        end
+        return matched and "прикреплено штатно" or "приварено к голове"
+    end)
 
-    if not matched then
-        handle.CFrame = head.CFrame * CFrame.new(0, 0.28, 0)
-        local w = Instance.new("WeldConstraint")
-        w.Part0 = head
-        w.Part1 = handle
-        w.Parent = handle
-    end
+    hatBusy = false
+    hatLast = ok and res or ("ошибка: " .. tostring(res))
 end
 
 -- ============================== коробокс ==============================
@@ -787,16 +833,16 @@ track(Lighting.ChildAdded:Connect(function(d)
     end
 end))
 
--- добиваем то, что игра включила обратно
 task.spawn(function()
     while true do
         task.wait(2)
-        if not FPS.boost then continue end
-        for _, d in ipairs(killedParts) do
-            if d.Parent and d.Enabled then pcall(function() d.Enabled = false end) end
-        end
-        for _, d in ipairs(killedFx) do
-            if d.Parent and d.Enabled then pcall(function() d.Enabled = false end) end
+        if FPS.boost then
+            for _, d in ipairs(killedParts) do
+                if d.Parent and d.Enabled then pcall(function() d.Enabled = false end) end
+            end
+            for _, d in ipairs(killedFx) do
+                if d.Parent and d.Enabled then pcall(function() d.Enabled = false end) end
+            end
         end
     end
 end)
@@ -821,8 +867,8 @@ local function enforce()
         end
     end
 
-    if CONFIG.hat and LP.Character and not hatTried then
-        hatTried = true
+    if CONFIG.hat and not hatBusy and not hasHat() and os.clock() - hatAt > 1 then
+        hatAt = os.clock()
         task.spawn(function() pcall(applyHat) end)
     end
 
@@ -859,7 +905,7 @@ local function watchChar(char)
     meshCache = nil
     cmMisses = 0
     airJumps = 0
-    hatTried = false
+    hatAt = 0
     enforce()
     task.delay(0.25, enforce)
     task.delay(0.8, enforce)
@@ -1164,7 +1210,7 @@ local function build()
     setHat = row("Шапка Doomsekkar", CONFIG.hat, function(v)
         CONFIG.hat = v
         if v then
-            hatTried = true
+            hatAt = 0
             task.spawn(function() pcall(applyHat) end)
         else
             pcall(clearHat)
@@ -1229,6 +1275,13 @@ local function build()
     end, 5)
 
     section("ПРОЧЕЕ")
+    button("Шапку заново", function()
+        CONFIG.hat = true
+        if setHat then setHat(true) end
+        pcall(clearHat)
+        hatAt = 0
+        task.spawn(function() pcall(applyHat) end)
+    end)
     button("Вернуть голову", function()
         CONFIG.headless = false
         if setHeadless then setHeadless(false) end
@@ -1241,8 +1294,8 @@ local function build()
         if setKorblox then setKorblox(true) end
         if setForce then setForce(true) end
         if CONFIG.hat then
-            hatTried = true
-            pcall(applyHat)
+            hatAt = 0
+            task.spawn(function() pcall(applyHat) end)
         end
 
         refreshScan()
@@ -1266,7 +1319,8 @@ local function build()
         print("[Venice] риг:", hum and hum.RigType.Name or "нет")
         print("[Venice] weld-режим:", tostring(weldMode))
         print("[Venice] CreateMeshPartAsync:", meshCache and "ок" or "недоступен")
-        print("[Venice] шапка:", CONFIG.hat and (hatTried and "пробовал" or "ждёт") or "выкл")
+        print("[Venice] шапка:", CONFIG.hat and "вкл" or "выкл", "| на голове:", tostring(hasHat()), "| статус:", hatLast)
+        print("[Venice] GetObjects:", type(game.GetObjects))
         print("[Venice] инф.прыжок:", tostring(CONFIG.infJump), "лимит:", CONFIG.jumpLimit, "счётчик:", airJumps)
         print("[Venice] fps:", tostring(FPS.boost), "частиц убито:", #killedParts, "эффектов:", #killedFx)
         print("[Venice] FOV:", tostring(fovTarget), "небо:", SKY.mode)
@@ -1325,7 +1379,7 @@ local function build()
         end
     end)
 
-    print("[Venice] v16 · Z меню")
+    print("[Venice] v17 · Z меню")
 end
 
 build()
