@@ -22,6 +22,7 @@ local CONFIG = { korblox = true, headless = true, force = true, hat = false, inf
 local FPS = { boost = false, shadowsOff = false, fxOff = false, partsOff = false, cap = 240 }
 
 local HAT_ID = 132809431
+local hatOffsetY = 0
 
 local MESH = "rbxassetid://101851696"
 local TEX  = "rbxassetid://101851254"
@@ -190,6 +191,7 @@ end
 local hatBusy = false
 local hatAt = 0
 local hatLast = "не запускалось"
+local hatTimer = nil
 
 local function hasHat()
     local char = LP.Character
@@ -237,6 +239,41 @@ local function loadHat()
     return nil
 end
 
+local function placeHat(acc, handle, head)
+    local existing = handle:FindFirstChildWhichIsA("Weld")
+    if existing then
+        if math.abs(hatOffsetY) > 0.001 then
+            pcall(function() existing.C1 = existing.C1 * CFrame.new(0, hatOffsetY, 0) end)
+        end
+        return "прикреплено штатно"
+    end
+
+    local cf
+    if acc:IsA("Hat") then
+        local okP, res = pcall(function()
+            local p = acc.AttachmentPoint
+            if p.Magnitude < 0.01 then error("нет точки") end
+            return head.CFrame * CFrame.fromMatrix(p, acc.AttachmentRight, acc.AttachmentUp, acc.AttachmentForward)
+        end)
+        if okP then cf = res end
+    end
+
+    if not cf then
+        local lift = head.Size.Y / 2 + handle.Size.Y / 2 * 0.5
+        cf = head.CFrame * CFrame.new(0, lift, 0)
+    end
+    if math.abs(hatOffsetY) > 0.001 then
+        cf = cf * CFrame.new(0, hatOffsetY, 0)
+    end
+
+    handle.CFrame = cf
+    local w = Instance.new("WeldConstraint")
+    w.Part0 = head
+    w.Part1 = handle
+    w.Parent = handle
+    return "приварено к голове"
+end
+
 local function applyHat()
     if hatBusy then return end
     local char = LP.Character
@@ -270,27 +307,22 @@ local function applyHat()
         pcall(function() handle.Massless = true end)
         handle.CastShadow = true
 
-        local matched = false
-        for _, a in ipairs(handle:GetChildren()) do
-            if a:IsA("Attachment") then
-                local ha = head:FindFirstChild(a.Name)
-                if ha and ha:IsA("Attachment") then matched = true break end
-            end
-        end
-
         acc.Parent = char
-        if not matched then
-            handle.CFrame = head.CFrame * CFrame.new(0, 0.35, 0)
-            local w = Instance.new("WeldConstraint")
-            w.Part0 = head
-            w.Part1 = handle
-            w.Parent = handle
-        end
-        return matched and "прикреплено штатно" or "приварено к голове"
+        return placeHat(acc, handle, head)
     end)
 
     hatBusy = false
     hatLast = ok and res or ("ошибка: " .. tostring(res))
+end
+
+local function reHat()
+    if hatTimer then pcall(function() task.cancel(hatTimer) end) end
+    hatTimer = task.delay(0.2, function()
+        hatTimer = nil
+        pcall(clearHat)
+        hatAt = 0
+        task.spawn(function() pcall(applyHat) end)
+    end)
 end
 
 -- ============================== коробокс ==============================
@@ -1216,6 +1248,10 @@ local function build()
             pcall(clearHat)
         end
     end)
+    slider("Смещение шапки", -0.6, 1.2, hatOffsetY, function(v)
+        hatOffsetY = v
+        if CONFIG.hat then reHat() end
+    end, 0.05)
     setForce = row("Жёсткая фиксация", CONFIG.force, function(v)
         CONFIG.force = v
         enforce()
@@ -1319,8 +1355,7 @@ local function build()
         print("[Venice] риг:", hum and hum.RigType.Name or "нет")
         print("[Venice] weld-режим:", tostring(weldMode))
         print("[Venice] CreateMeshPartAsync:", meshCache and "ок" or "недоступен")
-        print("[Venice] шапка:", CONFIG.hat and "вкл" or "выкл", "| на голове:", tostring(hasHat()), "| статус:", hatLast)
-        print("[Venice] GetObjects:", type(game.GetObjects))
+        print("[Venice] шапка:", CONFIG.hat and "вкл" or "выкл", "| на голове:", tostring(hasHat()), "| статус:", hatLast, "| смещение:", hatOffsetY)
         print("[Venice] инф.прыжок:", tostring(CONFIG.infJump), "лимит:", CONFIG.jumpLimit, "счётчик:", airJumps)
         print("[Venice] fps:", tostring(FPS.boost), "частиц убито:", #killedParts, "эффектов:", #killedFx)
         print("[Venice] FOV:", tostring(fovTarget), "небо:", SKY.mode)
@@ -1379,7 +1414,7 @@ local function build()
         end
     end)
 
-    print("[Venice] v17 · Z меню")
+    print("[Venice] v18 · Z меню")
 end
 
 build()
@@ -1393,7 +1428,7 @@ pcall(function()
             return Enum.ContextActionResult.Sink
         end
         return Enum.ContextActionResult.Pass
-    end, false, Enum.ContextActionPriority.High.Value, Enum.KeyCode.Z)
+    end, false, Enum.ContextActionPriority.High.Value, Enum.ContextActionPriority.High.Value)
 end)
 
 task.wait(1.2)
