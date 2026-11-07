@@ -2,7 +2,7 @@ if getgenv().VeniceCos then pcall(function() getgenv().VeniceCos:Destroy() end) 
 if getgenv().VeniceCosConns then
     for _, c in ipairs(getgenv().VeniceCosConns) do pcall(function() c:Disconnect() end) end
 end
-getgenv().VeniceCosConns = {} -- пизда
+getgenv().VeniceCosConns = {} - аи пизда
 
 local ref = cloneref or function(s) return s end
 local Players  = ref(game:GetService("Players"))
@@ -582,6 +582,10 @@ end))
 local lastJump = 0
 local airJumps = 0
 
+local function holdingJump()
+    return UIS:IsKeyDown(Enum.KeyCode.Space) or UIS:IsKeyDown(Enum.KeyCode.ButtonA)
+end
+
 local function infJump(auto)
     if not CONFIG.infJump then return end
     local now = os.clock()
@@ -623,9 +627,10 @@ track(RunS.Stepped:Connect(function()
     if not CONFIG.infJump then return end
     local char = LP.Character or myChar()
     local hum = char and char:FindFirstChildOfClass("Humanoid")
-    if hum and hum.FloorMaterial ~= Enum.Material.Air then
+    if not hum then return end
+    if hum.FloorMaterial ~= Enum.Material.Air then
         airJumps = 0
-        if CONFIG.jumpLimit == 0 then pcall(infJump, true) end
+        if CONFIG.jumpLimit == 0 and holdingJump() then pcall(infJump, true) end
     end
 end))
 
@@ -869,7 +874,7 @@ local function setParticles(off)
             if t then
                 if orig.wave ~= nil then t.WaterWaveSize = orig.wave end
                 if orig.refl ~= nil then t.WaterReflectance = orig.refl end
-                if orig.deco ~= nil then t.Deco = orig.deco end
+                if orig.deco ~= nil then t.Decoration = orig.deco end
             end
         end)
     end
@@ -1411,7 +1416,7 @@ local function build()
         print("[Venice] CreateMeshPartAsync:", meshCache and "ок" or "недоступен")
         print("[Venice] аксессуар:", accCurrent, "| на голове:", tostring(hasAcc()), "| статус:", accLast, "| смещение:", accOffsetY)
         print("[Venice] частей в папке:", partsFolder and #partsFolder:GetChildren() or 0)
-        print("[Venice] инф.прыжок:", tostring(CONFIG.infJump), "лимит:", CONFIG.jumpLimit, "счётчик:", airJumps)
+        print("[Venice] инф.прыжок:", tostring(CONFIG.infJump), "лимит:", CONFIG.jumpLimit, "счётчик:", airJumps, "пробел:", tostring(holdingJump()))
         print("[Venice] fps:", tostring(FPS.boost), "частиц убито:", #killedParts, "эффектов:", #killedFx)
         print("[Venice] FOV:", tostring(fovTarget), "небо:", SKY.mode)
         if char then
@@ -1473,7 +1478,7 @@ local function build()
         end
     end)
 
-    print("[Venice] v26 · Z меню")
+    print("[Venice] v27 · Z меню")
 end
 
 build()
