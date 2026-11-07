@@ -192,28 +192,44 @@ local function applyHeadless(char, on)
     end
 end
 
+-- ============================== папка частей ==============================
+
+local partsFolder = nil
+
+local function getFolder()
+    if partsFolder and partsFolder.Parent then return partsFolder end
+    local f = WS:FindFirstChild("VeniceCosParts")
+    if not f then
+        f = Instance.new("Folder")
+        f.Name = "VeniceCosParts"
+        f.Archivable = false
+        f.Parent = WS
+    end
+    partsFolder = f
+    return f
+end
+
 -- ============================== аксессуары ==============================
 
+local ACC_ATTR = "VeniceHatPart"
 local accBusy = false
 local accAt = 0
 local accLast = "не запускалось"
 local accTimer = nil
 
-local function hasAcc()
-    local char = LP.Character
-    if not char then return false end
-    for _, d in ipairs(char:GetChildren()) do
-        if d:GetAttribute("VeniceHat") then return true end
+local function accParts()
+    local out = {}
+    if not partsFolder then return out end
+    for _, p in ipairs(partsFolder:GetChildren()) do
+        if p:GetAttribute(ACC_ATTR) then table.insert(out, p) end
     end
-    return false
+    return out
 end
 
+local function hasAcc() return #accParts() > 0 end
+
 local function clearAcc()
-    local char = LP.Character
-    if not char then return end
-    for _, d in ipairs(char:GetChildren()) do
-        if d:GetAttribute("VeniceHat") then pcall(function() d:Destroy() end) end
-    end
+    for _, p in ipairs(accParts()) do pcall(function() p:Destroy() end) end
 end
 
 local function loadAcc(id)
@@ -245,41 +261,6 @@ local function loadAcc(id)
     return nil
 end
 
-local function placeAcc(acc, handle, head)
-    local existing = handle:FindFirstChildWhichIsA("Weld")
-    if existing then
-        if math.abs(accOffsetY) > 0.001 then
-            pcall(function() existing.C1 = existing.C1 * CFrame.new(0, accOffsetY, 0) end)
-        end
-        return "прикреплено штатно"
-    end
-
-    local cf
-    if acc:IsA("Hat") then
-        local okP, res = pcall(function()
-            local p = acc.AttachmentPoint
-            if p.Magnitude < 0.01 then error("нет точки") end
-            return head.CFrame * CFrame.fromMatrix(p, acc.AttachmentRight, acc.AttachmentUp, acc.AttachmentForward)
-        end)
-        if okP then cf = res end
-    end
-
-    if not cf then
-        local lift = head.Size.Y / 2 + handle.Size.Y / 2 * 0.5
-        cf = head.CFrame * CFrame.new(0, lift, 0)
-    end
-    if math.abs(accOffsetY) > 0.001 then
-        cf = cf * CFrame.new(0, accOffsetY, 0)
-    end
-
-    handle.CFrame = cf
-    local w = Instance.new("WeldConstraint")
-    w.Part0 = head
-    w.Part1 = handle
-    w.Parent = handle
-    return "приварено к голове"
-end
-
 local function applyAcc(id)
     if accBusy then return end
     local char = LP.Character
@@ -292,29 +273,40 @@ local function applyAcc(id)
         local found = loadAcc(id)
         if not found then error("ассет не загрузился") end
 
-        local acc, handle
+        local handle
         if found:IsA("Accessory") or found:IsA("Hat") then
-            acc = found
-            handle = acc:FindFirstChild("Handle") or acc:FindFirstChildWhichIsA("BasePart", true)
-        else
+            handle = found:FindFirstChild("Handle") or found:FindFirstChildWhichIsA("BasePart", true)
+        elseif found:IsA("BasePart") then
             handle = found
-            acc = Instance.new("Accessory")
-            acc.Name = "VeniceHat"
-            pcall(function() acc.AccessoryType = Enum.AccessoryType.Hat end)
-            handle.Name = "Handle"
-            handle.Parent = acc
+        else
+            handle = found:FindFirstChildWhichIsA("BasePart", true)
         end
         if not handle then error("в ассете нет Handle") end
 
-        acc:SetAttribute("VeniceHat", true)
+        handle.Name = "VeniceHatHandle"
+        handle:SetAttribute(ACC_ATTR, true)
         handle.Anchored = false
         handle.CanCollide = false
         handle.CanQuery = false
-        pcall(function() handle.Massless = true end)
+        handle.CanTouch = false
         handle.CastShadow = true
+        handle.Transparency = 0
+        pcall(function() handle.Massless = true end)
+        handle.Parent = getFolder()
 
-        acc.Parent = char
-        return placeAcc(acc, handle, head)
+        local att = handle:FindFirstChildWhichIsA("Attachment")
+        if att then
+            handle.CFrame = head.CFrame * CFrame.new(0, head.Size.Y / 2 + accOffsetY, 0) * att.CFrame:Inverse()
+        else
+            local lift = head.Size.Y / 2 + handle.Size.Y / 2 * 0.5 + accOffsetY
+            handle.CFrame = head.CFrame * CFrame.new(0, lift, 0)
+        end
+
+        local w = Instance.new("WeldConstraint")
+        w.Part0 = head
+        w.Part1 = handle
+        w.Parent = handle
+        return "приварено (папка)"
     end)
 
     accBusy = false
@@ -348,20 +340,6 @@ local meshCache = nil
 local savedCharMesh = {}
 local weldMode = false
 local cmMisses = 0
-local partsFolder = nil
-
-local function getFolder()
-    if partsFolder and partsFolder.Parent then return partsFolder end
-    local f = WS:FindFirstChild("VeniceCosParts")
-    if not f then
-        f = Instance.new("Folder")
-        f.Name = "VeniceCosParts"
-        f.Archivable = false
-        f.Parent = WS
-    end
-    partsFolder = f
-    return f
-end
 
 local function findLegParts(char)
     local upper = char:FindFirstChild("RightUpperLeg") or char:FindFirstChild("Right Leg") or char:FindFirstChild("RightLeg")
@@ -916,12 +894,13 @@ local function enforce()
         end
     end
 
-    if accCurrent ~= 0 and not accBusy and not hasAcc() and os.clock() - accAt > 1 then
+    pcall(cleanupParts, list)
+
+    if accCurrent ~= 0 and not accBusy and not hasAcc() and os.clock() - accAt > 0.4 then
         accAt = os.clock()
         task.spawn(function() pcall(applyAcc, accCurrent) end)
     end
 
-    pcall(cleanupParts, list)
     pcall(applyFov)
     pcall(syncSky)
 end
@@ -1370,6 +1349,7 @@ local function build()
         print("[Venice] weld-режим:", tostring(weldMode))
         print("[Venice] CreateMeshPartAsync:", meshCache and "ок" or "недоступен")
         print("[Venice] аксессуар:", accCurrent, "| на голове:", tostring(hasAcc()), "| статус:", accLast, "| смещение:", accOffsetY)
+        print("[Venice] частей в папке:", partsFolder and #partsFolder:GetChildren() or 0)
         print("[Venice] инф.прыжок:", tostring(CONFIG.infJump), "лимит:", CONFIG.jumpLimit, "счётчик:", airJumps)
         print("[Venice] fps:", tostring(FPS.boost), "частиц убито:", #killedParts, "эффектов:", #killedFx)
         print("[Venice] FOV:", tostring(fovTarget), "небо:", SKY.mode)
@@ -1377,6 +1357,10 @@ local function build()
             for _, d in ipairs(char:GetChildren()) do
                 if d:IsA("BasePart") then print("  ", d.Name, d.Size, d.Transparency) end
             end
+        end
+        for _, p in ipairs(accParts()) do
+            local w = p:FindFirstChildWhichIsA("WeldConstraint")
+            print("  шапка:", p:GetFullName(), "| вельд:", w and (w.Part0 and w.Part0.Name or "?") .. "->" .. (w.Part1 and w.Part1.Name or "?"))
         end
     end)
     button("Убрать всё", function()
@@ -1428,7 +1412,7 @@ local function build()
         end
     end)
 
-    print("[Venice] v20 · Z меню")
+    print("[Venice] v21 · Z меню")
 end
 
 build()
