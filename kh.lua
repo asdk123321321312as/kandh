@@ -18,7 +18,7 @@ while not LP do task.wait() end
 
 local function track(c) table.insert(getgenv().VeniceCosConns, c) return c end
 
-local CONFIG = { korblox = true, headless = true, force = true, infJump = false, jumpLimit = -1 }
+local CONFIG = { korbloxR = true, korbloxL = true, headless = true, force = true, jumpMode = "off", jumpLimit = -1 }
 local FPS = { boost = false, shadowsOff = false, fxOff = false, partsOff = false, cap = 240 }
 
 local ACCS = {
@@ -375,58 +375,88 @@ local savedCharMesh = {}
 local weldMode = false
 local cmMisses = 0
 
-local function findLegParts(char)
-    local upper = char:FindFirstChild("RightUpperLeg") or char:FindFirstChild("Right Leg") or char:FindFirstChild("RightLeg")
-    if not upper then
-        for _, d in ipairs(char:GetChildren()) do
-            if d:IsA("BasePart") and d.Name:match("^Right.*[Uu]pper.*Leg$") then upper = d break end
+local SIDES = { "Right", "Left" }
+
+local function legBodyPart(side)
+    return side == "Left" and Enum.BodyPart.LeftLeg or Enum.BodyPart.RightLeg
+end
+
+local function korbloxPartName(side) return "VeniceKorbloxLeg" .. side end
+local function korbloxMeshName(side) return "VeniceKorblox" .. side end
+
+local function findLegParts(char, side)
+    local function pick(...)
+        for _, n in ipairs({ ... }) do
+            local p = char:FindFirstChild(n)
+            if p and p:IsA("BasePart") then return p end
         end
     end
+    local upper, lower, foot
+    if side == "Left" then
+        upper = pick("LeftUpperLeg", "Left Upper Leg", "LeftLeg", "Left Leg")
+        lower = pick("LeftLowerLeg", "Left Lower Leg")
+        foot  = pick("LeftFoot", "Left Foot")
+    else
+        upper = pick("RightUpperLeg", "Right Upper Leg", "RightLeg", "Right Leg")
+        lower = pick("RightLowerLeg", "Right Lower Leg")
+        foot  = pick("RightFoot", "Right Foot")
+    end
     if not upper then
+        local patUp = "^" .. side .. ".*[Uu]pper.*Leg$"
+        local patAny = "^" .. side .. ".*Leg$"
         for _, d in ipairs(char:GetChildren()) do
-            if d:IsA("BasePart") and d.Name:match("^Right.*Leg$") then upper = d break end
+            if d:IsA("BasePart") and d.Name:match(patUp) then upper = d break end
+        end
+        if not upper then
+            for _, d in ipairs(char:GetChildren()) do
+                if d:IsA("BasePart") and d.Name:match(patAny) then upper = d break end
+            end
         end
     end
-    local lower = char:FindFirstChild("RightLowerLeg") or char:FindFirstChild("Right Lower Leg")
-    local foot  = char:FindFirstChild("RightFoot") or char:FindFirstChild("Right Foot")
     return upper, lower, foot
 end
 
-local function findKorbloxPart(char)
+local function findKorbloxPart(char, side)
     if not partsFolder then return nil end
+    local want = korbloxPartName(side)
     for _, p in ipairs(partsFolder:GetChildren()) do
-        if p:IsA("BasePart") and p.Name == "VeniceKorbloxLeg" then
+        if p:IsA("BasePart") and p.Name == want then
             local w = p:FindFirstChildWhichIsA("WeldConstraint")
             if w and w.Part1 and w.Part1:IsDescendantOf(char) then return p end
         end
     end
 end
 
-local function korbloxOk(char)
-    if char:FindFirstChild("VeniceKorblox") then return true end
-    return findKorbloxPart(char) ~= nil
+local function korbloxOk(char, side)
+    if char:FindFirstChild(korbloxMeshName(side)) then return true end
+    return findKorbloxPart(char, side) ~= nil
 end
 
-local function clearKorblox(char)
+local function clearKorblox(char, side)
     if not char then return end
-    local cm = char:FindFirstChild("VeniceKorblox")
+    local cm = char:FindFirstChild(korbloxMeshName(side))
     if cm then pcall(function() cm:Destroy() end) end
-    local p = findKorbloxPart(char)
+    local p = findKorbloxPart(char, side)
     if p then pcall(function() p:Destroy() end) end
-    local upper, lower, foot = findLegParts(char)
+    local upper, lower, foot = findLegParts(char, side)
     setHidden(upper, false)
     setHidden(lower, false)
     setHidden(foot, false)
-    local s = savedCharMesh[char]
+    local s = savedCharMesh[char] and savedCharMesh[char][side]
     if s then
         local m = Instance.new("CharacterMesh")
-        m.Name = "VeniceKorbloxRestore"
-        m.BodyPart = Enum.BodyPart.RightLeg
+        m.Name = "VeniceKorbloxRestore" .. side
+        m.BodyPart = legBodyPart(side)
         m.MeshId = s.mesh
         m.OverlayTextureId = s.tex
         m.Parent = char
-        savedCharMesh[char] = nil
+        savedCharMesh[char][side] = nil
     end
+end
+
+local function clearKorbloxAll(char)
+    clearKorblox(char, "Right")
+    clearKorblox(char, "Left")
 end
 
 local function getMeshPart()
@@ -441,7 +471,7 @@ local function getMeshPart()
     return nil
 end
 
-local function buildKorbloxLeg(char, upper, lower, foot)
+local function buildKorbloxLeg(char, side, upper, lower, foot)
     local top = upper.CFrame * CFrame.new(0, upper.Size.Y / 2, 0)
     local bottom
     if foot and foot:IsA("BasePart") then
@@ -465,10 +495,10 @@ local function buildKorbloxLeg(char, upper, lower, foot)
             part.TextureID = TEX
             part.MeshId = MESH
         end)
-        part.Name = "VeniceKorbloxLeg"
+        part.Name = korbloxPartName(side)
     else
         part = Instance.new("Part")
-        part.Name = "VeniceKorbloxLeg"
+        part.Name = korbloxPartName(side)
         local sm = Instance.new("SpecialMesh", part)
         sm.MeshType = Enum.MeshType.FileMesh
         sm.MeshId = MESH
@@ -476,7 +506,8 @@ local function buildKorbloxLeg(char, upper, lower, foot)
     end
 
     part.Size = Vector3.new(w, len, w)
-    part.CFrame = CFrame.lookAt(mid, mid + upper.CFrame.RightVector, up)
+    local dir = side == "Left" and -upper.CFrame.RightVector or upper.CFrame.RightVector
+    part.CFrame = CFrame.lookAt(mid, mid + dir, up)
     part.Anchored = false
     part.CanCollide = false
     part.CanQuery = false
@@ -497,34 +528,36 @@ local function buildKorbloxLeg(char, upper, lower, foot)
     setHidden(foot, true)
 end
 
-local function applyKorblox(char, on)
+local function applyKorblox(char, side, on)
     if not char then return end
     local hum = char:FindFirstChildOfClass("Humanoid")
     if not hum then return end
 
-    if not on then clearKorblox(char) return end
-    if korbloxOk(char) then return end
+    if not on then clearKorblox(char, side) return end
+    if korbloxOk(char, side) then return end
 
     if hum.RigType == Enum.HumanoidRigType.R6 and not weldMode then
+        local bp = legBodyPart(side)
         for _, d in ipairs(char:GetChildren()) do
-            if d:IsA("CharacterMesh") and d.BodyPart == Enum.BodyPart.RightLeg and d.Name ~= "VeniceKorblox" then
-                savedCharMesh[char] = { mesh = d.MeshId, tex = d.OverlayTextureId }
+            if d:IsA("CharacterMesh") and d.BodyPart == bp and not d.Name:match("^Venice") then
+                savedCharMesh[char] = savedCharMesh[char] or {}
+                savedCharMesh[char][side] = { mesh = d.MeshId, tex = d.OverlayTextureId }
                 pcall(function() d:Destroy() end)
                 break
             end
         end
         local m = Instance.new("CharacterMesh")
-        m.Name = "VeniceKorblox"
-        m.BodyPart = Enum.BodyPart.RightLeg
+        m.Name = korbloxMeshName(side)
+        m.BodyPart = bp
         m.MeshId = 101851696
         m.OverlayTextureId = 101851254
         m.Parent = char
         return
     end
 
-    local upper, lower, foot = findLegParts(char)
+    local upper, lower, foot = findLegParts(char, side)
     if not upper then return end
-    buildKorbloxLeg(char, upper, lower, foot)
+    buildKorbloxLeg(char, side, upper, lower, foot)
 end
 
 local function cleanupParts(list)
@@ -582,16 +615,25 @@ end))
 local lastJump = 0
 local airJumps = 0
 
+local GROUND_CD = 0.09
+local FLY_CD = 0.04
+
 local function holdingJump()
     return UIS:IsKeyDown(Enum.KeyCode.Space) or UIS:IsKeyDown(Enum.KeyCode.ButtonA)
 end
 
-local function infJump(auto)
-    if not CONFIG.infJump then return end
-    local now = os.clock()
-    if now - lastJump < 0.04 then return end
-    if auto and now - lastJump < 0.15 then return end
+local function setJumpMode(m)
+    CONFIG.jumpMode = m
+    airJumps = 0
+    lastJump = 0
+end
 
+local function jumpPowerOf(hum)
+    if hum.UseJumpPower then return hum.JumpPower end
+    return math.sqrt(2 * WS.Gravity * hum.JumpHeight)
+end
+
+local function fireJump(groundedOnly)
     local char = LP.Character or myChar()
     local hum = char and char:FindFirstChildOfClass("Humanoid")
     if not hum or hum.Health <= 0 then return end
@@ -599,20 +641,17 @@ local function infJump(auto)
     if not root or root.Anchored then return end
 
     local grounded = hum.FloorMaterial ~= Enum.Material.Air
-    if grounded then
-        airJumps = 0
-    else
+    if groundedOnly and not grounded then return end
+
+    if not grounded and not groundedOnly then
         if CONFIG.jumpLimit >= 0 and airJumps >= CONFIG.jumpLimit then return end
         airJumps = airJumps + 1
     end
-    lastJump = now
+    lastJump = os.clock()
 
     pcall(function() hum:ChangeState(Enum.HumanoidStateType.Jumping) end)
 
-    local jp = hum.JumpPower
-    if not hum.UseJumpPower then
-        jp = math.sqrt(2 * WS.Gravity * hum.JumpHeight)
-    end
+    local jp = jumpPowerOf(hum)
     if jp and jp > 0 then
         local v = root.AssemblyLinearVelocity
         if v.Y < jp * 0.95 then
@@ -621,16 +660,29 @@ local function infJump(auto)
     end
 end
 
-track(UIS.JumpRequest:Connect(function() pcall(infJump) end))
+track(UIS.JumpRequest:Connect(function()
+    if CONFIG.jumpMode == "off" then return end
+    if CONFIG.jumpMode == "ground" then
+        if os.clock() - lastJump < GROUND_CD then return end
+        pcall(fireJump, true)
+    else
+        if os.clock() - lastJump < FLY_CD then return end
+        pcall(fireJump, false)
+    end
+end))
 
 track(RunS.Stepped:Connect(function()
-    if not CONFIG.infJump then return end
+    if CONFIG.jumpMode == "off" then return end
     local char = LP.Character or myChar()
     local hum = char and char:FindFirstChildOfClass("Humanoid")
     if not hum then return end
     if hum.FloorMaterial ~= Enum.Material.Air then
         airJumps = 0
-        if CONFIG.jumpLimit == 0 and holdingJump() then pcall(infJump, true) end
+        if CONFIG.jumpMode == "ground" then
+            if holdingJump() and os.clock() - lastJump >= GROUND_CD then pcall(fireJump, true) end
+        elseif CONFIG.jumpLimit == 0 and holdingJump() then
+            if os.clock() - lastJump >= 0.15 then pcall(fireJump, false) end
+        end
     end
 end))
 
@@ -928,15 +980,20 @@ local function enforce()
 
     for _, char in ipairs(list) do
         if CONFIG.headless then pcall(applyHeadless, char, true) end
-        if CONFIG.korblox then
-            if not korbloxOk(char) then
-                local hum = char:FindFirstChildOfClass("Humanoid")
-                if hum and hum.RigType == Enum.HumanoidRigType.R6 and not char:FindFirstChild("VeniceKorblox") then
+
+        if CONFIG.korbloxR or CONFIG.korbloxL then
+            local hum = char:FindFirstChildOfClass("Humanoid")
+            if hum and hum.RigType == Enum.HumanoidRigType.R6 then
+                local missing = false
+                if CONFIG.korbloxR and not char:FindFirstChild(korbloxMeshName("Right")) and not findKorbloxPart(char, "Right") then missing = true end
+                if CONFIG.korbloxL and not char:FindFirstChild(korbloxMeshName("Left")) and not findKorbloxPart(char, "Left") then missing = true end
+                if missing then
                     cmMisses = cmMisses + 1
                     if cmMisses >= 3 then weldMode = true end
                 end
             end
-            pcall(applyKorblox, char, true)
+            if CONFIG.korbloxR then pcall(applyKorblox, char, "Right", true) end
+            if CONFIG.korbloxL then pcall(applyKorblox, char, "Left", true) end
         end
     end
 
@@ -1219,7 +1276,7 @@ local function setOpen(force)
     end
 end
 
-local setHeadless, setKorblox, setForce, setBoost, setInf
+local setHeadless, setKorbloxR, setKorbloxL, setForce, setBoost
 
 local function build()
     gui = Instance.new("ScreenGui")
@@ -1289,9 +1346,23 @@ local function build()
         CONFIG.headless = v
         for _, c in ipairs(targets()) do pcall(applyHeadless, c, v) end
     end)
-    setKorblox = row("Korblox", CONFIG.korblox, function(v)
-        CONFIG.korblox = v
-        for _, c in ipairs(targets()) do pcall(applyKorblox, c, v) end
+    setKorbloxR = row("Korblox правая", CONFIG.korbloxR, function(v)
+        CONFIG.korbloxR = v
+        for _, c in ipairs(targets()) do pcall(applyKorblox, c, "Right", v) end
+    end)
+    setKorbloxL = row("Korblox левая", CONFIG.korbloxL, function(v)
+        CONFIG.korbloxL = v
+        for _, c in ipairs(targets()) do pcall(applyKorblox, c, "Left", v) end
+    end)
+    button("Обе ноги", function()
+        CONFIG.korbloxR, CONFIG.korbloxL = true, true
+        if setKorbloxR then setKorbloxR(true) end
+        if setKorbloxL then setKorbloxL(true) end
+    end)
+    button("Снять обе ноги", function()
+        CONFIG.korbloxR, CONFIG.korbloxL = false, false
+        if setKorbloxR then setKorbloxR(false) end
+        if setKorbloxL then setKorbloxL(false) end
     end)
 
     section("ГОЛОВА")
@@ -1310,11 +1381,10 @@ local function build()
     end, 26)
 
     section("ДВИЖЕНИЕ")
-    setInf = row("Бесконечный прыжок", CONFIG.infJump, function(v)
-        CONFIG.infJump = v
-        airJumps = 0
-    end)
-    slider("Прыжков в воздухе", -1, 10, CONFIG.jumpLimit, function(v)
+    button("Прыжок выкл", function() setJumpMode("off") end)
+    button("Режим: полёт", function() setJumpMode("fly") end, true)
+    button("Режим: отскок от земли", function() setJumpMode("ground") end, true)
+    slider("Прыжков в воздухе (полёт)", -1, 10, CONFIG.jumpLimit, function(v)
         CONFIG.jumpLimit = v
         airJumps = 0
     end, 1, function(v)
@@ -1380,9 +1450,10 @@ local function build()
         enforce()
     end)
     button("Переприменить", function()
-        CONFIG.headless, CONFIG.korblox, CONFIG.force = true, true, true
+        CONFIG.headless, CONFIG.korbloxR, CONFIG.korbloxL, CONFIG.force = true, true, true, true
         if setHeadless then setHeadless(true) end
-        if setKorblox then setKorblox(true) end
+        if setKorbloxR then setKorbloxR(true) end
+        if setKorbloxL then setKorbloxL(true) end
         if setForce then setForce(true) end
         if accCurrent ~= 0 then
             accAt = 0
@@ -1414,9 +1485,10 @@ local function build()
         print("[Venice] риг:", hum and hum.RigType.Name or "нет")
         print("[Venice] weld-режим:", tostring(weldMode))
         print("[Venice] CreateMeshPartAsync:", meshCache and "ок" or "недоступен")
+        print("[Venice] корблокс R:", CONFIG.korbloxR, "L:", CONFIG.korbloxL)
         print("[Venice] аксессуар:", accCurrent, "| на голове:", tostring(hasAcc()), "| статус:", accLast, "| смещение:", accOffsetY)
         print("[Venice] частей в папке:", partsFolder and #partsFolder:GetChildren() or 0)
-        print("[Venice] инф.прыжок:", tostring(CONFIG.infJump), "лимит:", CONFIG.jumpLimit, "счётчик:", airJumps, "пробел:", tostring(holdingJump()))
+        print("[Venice] режим прыжка:", CONFIG.jumpMode, "лимит:", CONFIG.jumpLimit, "счётчик:", airJumps, "пробел:", tostring(holdingJump()))
         print("[Venice] fps:", tostring(FPS.boost), "частиц убито:", #killedParts, "эффектов:", #killedFx)
         print("[Venice] FOV:", tostring(fovTarget), "небо:", SKY.mode)
         if char then
@@ -1430,19 +1502,19 @@ local function build()
         end
     end)
     button("Убрать всё", function()
-        CONFIG.headless, CONFIG.korblox, CONFIG.force = false, false, false
-        CONFIG.infJump = false
+        CONFIG.headless, CONFIG.korbloxR, CONFIG.korbloxL, CONFIG.force = false, false, false, false
+        setJumpMode("off")
         accCurrent = 0
         FPS.boost, FPS.shadowsOff, FPS.fxOff, FPS.partsOff = false, false, false, false
         if setHeadless then setHeadless(false) end
-        if setKorblox then setKorblox(false) end
+        if setKorbloxR then setKorbloxR(false) end
+        if setKorbloxL then setKorbloxL(false) end
         if setForce then setForce(false) end
         if setBoost then setBoost(false) end
-        if setInf then setInf(false) end
         syncFps()
         for _, c in ipairs(targets()) do
             pcall(applyHeadless, c, false)
-            pcall(clearKorblox, c)
+            pcall(clearKorbloxAll, c)
         end
         pcall(clearAcc)
         pcall(applySky, "off")
@@ -1478,7 +1550,7 @@ local function build()
         end
     end)
 
-    print("[Venice] v27 · Z меню")
+    print("[Venice] v28 · Z меню")
 end
 
 build()
