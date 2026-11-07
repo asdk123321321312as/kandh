@@ -2,7 +2,7 @@ if getgenv().VeniceCos then pcall(function() getgenv().VeniceCos:Destroy() end) 
 if getgenv().VeniceCosConns then
     for _, c in ipairs(getgenv().VeniceCosConns) do pcall(function() c:Disconnect() end) end
 end
-getgenv().VeniceCosConns = {} -- аи пиздаfsdfsdf
+getgenv().VeniceCosConns = {} --пизда
 
 local ref = cloneref or function(s) return s end
 local Players  = ref(game:GetService("Players"))
@@ -18,7 +18,7 @@ while not LP do task.wait() end
 
 local function track(c) table.insert(getgenv().VeniceCosConns, c) return c end
 
-local CONFIG = { korbloxR = true, korbloxL = true, headless = true, force = true, jumpMode = "off", jumpLimit = -1 }
+local CONFIG = { korbloxR = true, korbloxL = true, headless = true, force = true, infJump = false, jumpLimit = -1 }
 local FPS = { boost = false, shadowsOff = false, fxOff = false, partsOff = false, cap = 240 }
 
 local ACCS = {
@@ -30,8 +30,29 @@ local ACCS = {
 local accCurrent = 0
 local accOffsetY = 0
 
-local MESH = "rbxassetid://101851696"
-local TEX  = "rbxassetid://101851254"
+local TEX = "rbxassetid://101851254"
+
+local SIDES = {
+    R = {
+        body  = Enum.BodyPart.RightLeg,
+        mesh  = "rbxassetid://101851696",
+        tex   = TEX,
+        upper = { "RightUpperLeg", "Right Leg", "RightLeg" },
+        lower = { "RightLowerLeg", "Right Lower Leg" },
+        foot  = { "RightFoot", "Right Foot" },
+        pat   = "Right",
+    },
+    L = {
+        body  = Enum.BodyPart.LeftLeg,
+        mesh  = "rbxassetid://139607673",
+        tex   = TEX,
+        upper = { "LeftUpperLeg", "Left Leg", "LeftLeg" },
+        lower = { "LeftLowerLeg", "Left Lower Leg" },
+        foot  = { "LeftFoot", "Left Foot" },
+        pat   = "Left",
+    },
+}
+local SIDE_LIST = { "R", "L" }
 
 local ACCENT = Color3.fromRGB(152, 132, 255)
 local BG     = Color3.fromRGB(9, 9, 11)
@@ -370,57 +391,34 @@ end
 
 -- ============================== коробокс ==============================
 
-local meshCache = nil
-local savedCharMesh = {}
+local meshCache = {}
+local savedCharMesh = setmetatable({}, { __mode = "k" })
 local weldMode = false
 local cmMisses = 0
 
-local SIDES = { "Right", "Left" }
-
-local function legBodyPart(side)
-    return side == "Left" and Enum.BodyPart.LeftLeg or Enum.BodyPart.RightLeg
-end
-
-local function korbloxPartName(side) return "VeniceKorbloxLeg" .. side end
-local function korbloxMeshName(side) return "VeniceKorblox" .. side end
-
 local function findLegParts(char, side)
-    local function pick(...)
-        for _, n in ipairs({ ... }) do
-            local p = char:FindFirstChild(n)
-            if p and p:IsA("BasePart") then return p end
-        end
-    end
+    local d = SIDES[side]
     local upper, lower, foot
-    if side == "Left" then
-        upper = pick("LeftUpperLeg", "Left Upper Leg", "LeftLeg", "Left Leg")
-        lower = pick("LeftLowerLeg", "Left Lower Leg")
-        foot  = pick("LeftFoot", "Left Foot")
-    else
-        upper = pick("RightUpperLeg", "Right Upper Leg", "RightLeg", "Right Leg")
-        lower = pick("RightLowerLeg", "Right Lower Leg")
-        foot  = pick("RightFoot", "Right Foot")
+    for _, n in ipairs(d.upper) do upper = char:FindFirstChild(n) if upper then break end end
+    if not upper then
+        for _, c in ipairs(char:GetChildren()) do
+            if c:IsA("BasePart") and c.Name:match("^" .. d.pat .. ".*[Uu]pper.*Leg$") then upper = c break end
+        end
     end
     if not upper then
-        local patUp = "^" .. side .. ".*[Uu]pper.*Leg$"
-        local patAny = "^" .. side .. ".*Leg$"
-        for _, d in ipairs(char:GetChildren()) do
-            if d:IsA("BasePart") and d.Name:match(patUp) then upper = d break end
-        end
-        if not upper then
-            for _, d in ipairs(char:GetChildren()) do
-                if d:IsA("BasePart") and d.Name:match(patAny) then upper = d break end
-            end
+        for _, c in ipairs(char:GetChildren()) do
+            if c:IsA("BasePart") and c.Name:match("^" .. d.pat .. ".*Leg$") then upper = c break end
         end
     end
+    for _, n in ipairs(d.lower) do lower = char:FindFirstChild(n) if lower then break end end
+    for _, n in ipairs(d.foot) do foot = char:FindFirstChild(n) if foot then break end end
     return upper, lower, foot
 end
 
 local function findKorbloxPart(char, side)
     if not partsFolder then return nil end
-    local want = korbloxPartName(side)
     for _, p in ipairs(partsFolder:GetChildren()) do
-        if p:IsA("BasePart") and p.Name == want then
+        if p:IsA("BasePart") and p.Name == "VeniceKorbloxLeg" .. side then
             local w = p:FindFirstChildWhichIsA("WeldConstraint")
             if w and w.Part1 and w.Part1:IsDescendantOf(char) then return p end
         end
@@ -428,13 +426,13 @@ local function findKorbloxPart(char, side)
 end
 
 local function korbloxOk(char, side)
-    if char:FindFirstChild(korbloxMeshName(side)) then return true end
+    if char:FindFirstChild("VeniceKorblox" .. side) then return true end
     return findKorbloxPart(char, side) ~= nil
 end
 
 local function clearKorblox(char, side)
     if not char then return end
-    local cm = char:FindFirstChild(korbloxMeshName(side))
+    local cm = char:FindFirstChild("VeniceKorblox" .. side)
     if cm then pcall(function() cm:Destroy() end) end
     local p = findKorbloxPart(char, side)
     if p then pcall(function() p:Destroy() end) end
@@ -445,8 +443,8 @@ local function clearKorblox(char, side)
     local s = savedCharMesh[char] and savedCharMesh[char][side]
     if s then
         local m = Instance.new("CharacterMesh")
-        m.Name = "VeniceKorbloxRestore" .. side
-        m.BodyPart = legBodyPart(side)
+        m.Name = "VeniceKorbloxRestore"
+        m.BodyPart = SIDES[side].body
         m.MeshId = s.mesh
         m.OverlayTextureId = s.tex
         m.Parent = char
@@ -455,17 +453,22 @@ local function clearKorblox(char, side)
 end
 
 local function clearKorbloxAll(char)
-    clearKorblox(char, "Right")
-    clearKorblox(char, "Left")
+    for _, s in ipairs(SIDE_LIST) do pcall(clearKorblox, char, s) end
 end
 
-local function getMeshPart()
-    if meshCache and meshCache.Parent then return meshCache end
+local function getMeshPart(side)
+    local c = meshCache[side]
+    if c and c.Parent then return c end
+    local d = SIDES[side]
     local ok, part = pcall(function()
-        return AssetS:CreateMeshPartAsync(MESH, Enum.CollisionFidelity.Box)
+        return AssetS:CreateMeshPartAsync(d.mesh, Enum.CollisionFidelity.Box)
     end)
     if ok and typeof(part) == "MeshPart" then
-        meshCache = part
+        pcall(function()
+            part.MeshId = d.mesh
+            part.TextureID = d.tex
+        end)
+        meshCache[side] = part
         return part
     end
     return nil
@@ -489,25 +492,24 @@ local function buildKorbloxLeg(char, side, upper, lower, foot)
     local mid = (a + b) / 2
     local w = math.clamp(math.max(upper.Size.X, upper.Size.Z) * 1.05, 0.3, 3)
 
-    local part = getMeshPart()
+    local part = getMeshPart(side)
     if part then
         pcall(function()
-            part.TextureID = TEX
-            part.MeshId = MESH
+            part.TextureID = SIDES[side].tex
+            part.MeshId = SIDES[side].mesh
         end)
-        part.Name = korbloxPartName(side)
+        part.Name = "VeniceKorbloxLeg" .. side
     else
         part = Instance.new("Part")
-        part.Name = korbloxPartName(side)
+        part.Name = "VeniceKorbloxLeg" .. side
         local sm = Instance.new("SpecialMesh", part)
         sm.MeshType = Enum.MeshType.FileMesh
-        sm.MeshId = MESH
-        sm.TextureId = TEX
+        sm.MeshId = SIDES[side].mesh
+        sm.TextureId = SIDES[side].tex
     end
 
     part.Size = Vector3.new(w, len, w)
-    local dir = side == "Left" and -upper.CFrame.RightVector or upper.CFrame.RightVector
-    part.CFrame = CFrame.lookAt(mid, mid + dir, up)
+    part.CFrame = CFrame.lookAt(mid, mid + upper.CFrame.RightVector, up)
     part.Anchored = false
     part.CanCollide = false
     part.CanQuery = false
@@ -528,8 +530,10 @@ local function buildKorbloxLeg(char, side, upper, lower, foot)
     setHidden(foot, true)
 end
 
-local function applyKorblox(char, side, on)
+local function applyKorblox(char, on, side)
     if not char then return end
+    local d = SIDES[side]
+    if not d then return end
     local hum = char:FindFirstChildOfClass("Humanoid")
     if not hum then return end
 
@@ -537,19 +541,19 @@ local function applyKorblox(char, side, on)
     if korbloxOk(char, side) then return end
 
     if hum.RigType == Enum.HumanoidRigType.R6 and not weldMode then
-        local bp = legBodyPart(side)
-        for _, d in ipairs(char:GetChildren()) do
-            if d:IsA("CharacterMesh") and d.BodyPart == bp and not d.Name:match("^Venice") then
+        for _, c in ipairs(char:GetChildren()) do
+            if c:IsA("CharacterMesh") and c.BodyPart == d.body and c.Name ~= "VeniceKorblox" .. side then
                 savedCharMesh[char] = savedCharMesh[char] or {}
-                savedCharMesh[char][side] = { mesh = d.MeshId, tex = d.OverlayTextureId }
-                pcall(function() d:Destroy() end)
+                savedCharMesh[char][side] = { mesh = c.MeshId, tex = c.OverlayTextureId }
+                pcall(function() c:Destroy() end)
                 break
             end
         end
         local m = Instance.new("CharacterMesh")
-        m.Name = korbloxMeshName(side)
-        m.BodyPart = bp
+        m.Name = "VeniceKorblox" .. side
+        m.BodyPart = d.body
         m.MeshId = 101851696
+        if side == "L" then m.MeshId = 139607673 end
         m.OverlayTextureId = 101851254
         m.Parent = char
         return
@@ -615,25 +619,16 @@ end))
 local lastJump = 0
 local airJumps = 0
 
-local GROUND_CD = 0.09
-local FLY_CD = 0.04
-
 local function holdingJump()
     return UIS:IsKeyDown(Enum.KeyCode.Space) or UIS:IsKeyDown(Enum.KeyCode.ButtonA)
 end
 
-local function setJumpMode(m)
-    CONFIG.jumpMode = m
-    airJumps = 0
-    lastJump = 0
-end
+local function infJump(auto)
+    if not CONFIG.infJump then return end
+    local now = os.clock()
+    if now - lastJump < 0.04 then return end
+    if auto and now - lastJump < 0.15 then return end
 
-local function jumpPowerOf(hum)
-    if hum.UseJumpPower then return hum.JumpPower end
-    return math.sqrt(2 * WS.Gravity * hum.JumpHeight)
-end
-
-local function fireJump(groundedOnly)
     local char = LP.Character or myChar()
     local hum = char and char:FindFirstChildOfClass("Humanoid")
     if not hum or hum.Health <= 0 then return end
@@ -641,17 +636,20 @@ local function fireJump(groundedOnly)
     if not root or root.Anchored then return end
 
     local grounded = hum.FloorMaterial ~= Enum.Material.Air
-    if groundedOnly and not grounded then return end
-
-    if not grounded and not groundedOnly then
+    if grounded then
+        airJumps = 0
+    else
         if CONFIG.jumpLimit >= 0 and airJumps >= CONFIG.jumpLimit then return end
         airJumps = airJumps + 1
     end
-    lastJump = os.clock()
+    lastJump = now
 
     pcall(function() hum:ChangeState(Enum.HumanoidStateType.Jumping) end)
 
-    local jp = jumpPowerOf(hum)
+    local jp = hum.JumpPower
+    if not hum.UseJumpPower then
+        jp = math.sqrt(2 * WS.Gravity * hum.JumpHeight)
+    end
     if jp and jp > 0 then
         local v = root.AssemblyLinearVelocity
         if v.Y < jp * 0.95 then
@@ -660,29 +658,16 @@ local function fireJump(groundedOnly)
     end
 end
 
-track(UIS.JumpRequest:Connect(function()
-    if CONFIG.jumpMode == "off" then return end
-    if CONFIG.jumpMode == "ground" then
-        if os.clock() - lastJump < GROUND_CD then return end
-        pcall(fireJump, true)
-    else
-        if os.clock() - lastJump < FLY_CD then return end
-        pcall(fireJump, false)
-    end
-end))
+track(UIS.JumpRequest:Connect(function() pcall(infJump) end))
 
 track(RunS.Stepped:Connect(function()
-    if CONFIG.jumpMode == "off" then return end
+    if not CONFIG.infJump then return end
     local char = LP.Character or myChar()
     local hum = char and char:FindFirstChildOfClass("Humanoid")
     if not hum then return end
     if hum.FloorMaterial ~= Enum.Material.Air then
         airJumps = 0
-        if CONFIG.jumpMode == "ground" then
-            if holdingJump() and os.clock() - lastJump >= GROUND_CD then pcall(fireJump, true) end
-        elseif CONFIG.jumpLimit == 0 and holdingJump() then
-            if os.clock() - lastJump >= 0.15 then pcall(fireJump, false) end
-        end
+        if CONFIG.jumpLimit == 0 and holdingJump() then pcall(infJump, true) end
     end
 end))
 
@@ -980,20 +965,18 @@ local function enforce()
 
     for _, char in ipairs(list) do
         if CONFIG.headless then pcall(applyHeadless, char, true) end
-
-        if CONFIG.korbloxR or CONFIG.korbloxL then
-            local hum = char:FindFirstChildOfClass("Humanoid")
-            if hum and hum.RigType == Enum.HumanoidRigType.R6 then
-                local missing = false
-                if CONFIG.korbloxR and not char:FindFirstChild(korbloxMeshName("Right")) and not findKorbloxPart(char, "Right") then missing = true end
-                if CONFIG.korbloxL and not char:FindFirstChild(korbloxMeshName("Left")) and not findKorbloxPart(char, "Left") then missing = true end
-                if missing then
-                    cmMisses = cmMisses + 1
-                    if cmMisses >= 3 then weldMode = true end
+        for _, s in ipairs(SIDE_LIST) do
+            local on = (s == "R") and CONFIG.korbloxR or CONFIG.korbloxL
+            if on then
+                if not korbloxOk(char, s) then
+                    local hum = char:FindFirstChildOfClass("Humanoid")
+                    if hum and hum.RigType == Enum.HumanoidRigType.R6 and not char:FindFirstChild("VeniceKorblox" .. s) then
+                        cmMisses = cmMisses + 1
+                        if cmMisses >= 3 then weldMode = true end
+                    end
                 end
+                pcall(applyKorblox, char, true, s)
             end
-            if CONFIG.korbloxR then pcall(applyKorblox, char, "Right", true) end
-            if CONFIG.korbloxL then pcall(applyKorblox, char, "Left", true) end
         end
     end
 
@@ -1033,7 +1016,7 @@ if not BOUND then
 end
 
 local function watchChar(char)
-    meshCache = nil
+    table.clear(meshCache)
     cmMisses = 0
     airJumps = 0
     accAt = 0
@@ -1087,6 +1070,7 @@ end))
 -- ============================== меню ==============================
 
 local gui, panel, open = nil, nil, false
+local pages, tabBtns, activeTab = {}, {}, nil
 
 local function tw(o, t, p) TweenS:Create(o, TweenInfo.new(t), p):Play() end
 
@@ -1276,7 +1260,26 @@ local function setOpen(force)
     end
 end
 
-local setHeadless, setKorbloxR, setKorbloxL, setForce, setBoost
+local setHeadless, setKorbloxR, setKorbloxL, setForce, setBoost, setInf
+
+local function setTab(id)
+    activeTab = id
+    for k, p in pairs(pages) do p.Visible = (k == id) end
+    for k, b in pairs(tabBtns) do
+        b.BackgroundColor3 = (k == id) and ACCENT or ROW
+        b.TextColor3 = (k == id) and BG or SUB
+    end
+end
+
+local TABS = {
+    { id = "look", label = "Внешка" },
+    { id = "head", label = "Голова" },
+    { id = "move", label = "Движение" },
+    { id = "cam",  label = "Камера" },
+    { id = "sky",  label = "Небо" },
+    { id = "fps",  label = "FPS" },
+    { id = "misc", label = "Прочее" },
+}
 
 local function build()
     gui = Instance.new("ScreenGui")
@@ -1288,27 +1291,27 @@ local function build()
     getgenv().VeniceCos = gui
     if not stealthGui(gui) then gui.Parent = LP:WaitForChild("PlayerGui") end
 
-    panel = Instance.new("Frame")
-    panel.Position = UDim2.fromOffset(20, 70)
-    panel.Size = UDim2.fromOffset(210, 430)
-    panel.BackgroundColor3 = BG
-    panel.BackgroundTransparency = 0.05
-    panel.BorderSizePixel = 0
-    panel.Visible = false
-    panel.Parent = gui
-    Instance.new("UICorner", panel).CornerRadius = UDim.new(0, 12)
-    local st = Instance.new("UIStroke", panel)
+    local shell = Instance.new("Frame")
+    shell.Position = UDim2.fromOffset(20, 70)
+    shell.Size = UDim2.fromOffset(480, 306)
+    shell.BackgroundColor3 = BG
+    shell.BackgroundTransparency = 0.05
+    shell.BorderSizePixel = 0
+    shell.Visible = false
+    shell.Parent = gui
+    Instance.new("UICorner", shell).CornerRadius = UDim.new(0, 12)
+    local st = Instance.new("UIStroke", shell)
     st.Color = STROKE
     st.Transparency = 0.3
 
     local head = Instance.new("Frame")
-    head.Size = UDim2.new(1, 0, 0, 32)
+    head.Size = UDim2.new(1, 0, 0, 30)
     head.BackgroundTransparency = 1
-    head.Parent = panel
+    head.Parent = shell
 
     local dot = Instance.new("Frame")
     dot.Size = UDim2.fromOffset(6, 6)
-    dot.Position = UDim2.fromOffset(13, 13)
+    dot.Position = UDim2.fromOffset(13, 12)
     dot.BackgroundColor3 = ACCENT
     dot.BorderSizePixel = 0
     dot.Parent = head
@@ -1316,7 +1319,7 @@ local function build()
 
     local title = Instance.new("TextLabel")
     title.Size = UDim2.new(1, -34, 0, 13)
-    title.Position = UDim2.fromOffset(25, 9)
+    title.Position = UDim2.fromOffset(25, 8)
     title.BackgroundTransparency = 1
     title.Font = Enum.Font.GothamBold
     title.TextSize = 11
@@ -1325,47 +1328,77 @@ local function build()
     title.Text = "VENICE · COSMETICS"
     title.Parent = head
 
-    local body = Instance.new("ScrollingFrame")
-    body.Size = UDim2.new(1, -8, 1, -40)
-    body.Position = UDim2.fromOffset(4, 34)
-    body.BackgroundTransparency = 1
-    body.BorderSizePixel = 0
-    body.ScrollBarThickness = 2
-    body.ScrollBarImageColor3 = ACCENT
-    body.CanvasSize = UDim2.new()
-    body.AutomaticCanvasSize = Enum.AutomaticSize.Y
-    body.Parent = panel
-    local lay = Instance.new("UIListLayout", body)
-    lay.Padding = UDim.new(0, 5)
+    local bar = Instance.new("Frame")
+    bar.Size = UDim2.new(1, -8, 0, 24)
+    bar.Position = UDim2.fromOffset(4, 32)
+    bar.BackgroundTransparency = 1
+    bar.Parent = shell
+    local bl = Instance.new("UIListLayout", bar)
+    bl.FillDirection = Enum.FillDirection.Horizontal
+    bl.Padding = UDim.new(0, 4)
+    bl.SortOrder = Enum.SortOrder.LayoutOrder
 
-    local savedPanel = panel
-    panel = body
+    for i, t in ipairs(TABS) do
+        local b = Instance.new("TextButton")
+        b.Size = UDim2.fromOffset(56, 22)
+        b.LayoutOrder = i
+        b.BackgroundColor3 = ROW
+        b.BorderSizePixel = 0
+        b.AutoButtonColor = false
+        b.Font = Enum.Font.GothamBold
+        b.TextSize = 10
+        b.TextColor3 = SUB
+        b.Text = t.label
+        b.Parent = bar
+        Instance.new("UICorner", b).CornerRadius = UDim.new(0, 6)
+        tabBtns[t.id] = b
+        b.MouseButton1Click:Connect(function() setTab(t.id) end)
 
+        local p = Instance.new("ScrollingFrame")
+        p.Size = UDim2.new(1, -8, 1, -66)
+        p.Position = UDim2.fromOffset(4, 62)
+        p.BackgroundTransparency = 1
+        p.BorderSizePixel = 0
+        p.ScrollBarThickness = 2
+        p.ScrollBarImageColor3 = ACCENT
+        p.CanvasSize = UDim2.new()
+        p.AutomaticCanvasSize = Enum.AutomaticSize.Y
+        p.Visible = false
+        p.Parent = shell
+        local lay = Instance.new("UIListLayout", p)
+        lay.Padding = UDim.new(0, 5)
+        pages[t.id] = p
+    end
+
+    panel = pages.look
     section("ВНЕШКА")
     setHeadless = row("Headless", CONFIG.headless, function(v)
         CONFIG.headless = v
         for _, c in ipairs(targets()) do pcall(applyHeadless, c, v) end
     end)
-    setKorbloxR = row("Korblox правая", CONFIG.korbloxR, function(v)
+    setKorbloxR = row("Korblox · правая нога", CONFIG.korbloxR, function(v)
         CONFIG.korbloxR = v
-        for _, c in ipairs(targets()) do pcall(applyKorblox, c, "Right", v) end
+        for _, c in ipairs(targets()) do pcall(applyKorblox, c, v, "R") end
     end)
-    setKorbloxL = row("Korblox левая", CONFIG.korbloxL, function(v)
+    setKorbloxL = row("Korblox · левая нога", CONFIG.korbloxL, function(v)
         CONFIG.korbloxL = v
-        for _, c in ipairs(targets()) do pcall(applyKorblox, c, "Left", v) end
+        for _, c in ipairs(targets()) do pcall(applyKorblox, c, v, "L") end
     end)
     button("Обе ноги", function()
-        CONFIG.korbloxR, CONFIG.korbloxL = true, true
         if setKorbloxR then setKorbloxR(true) end
         if setKorbloxL then setKorbloxL(true) end
     end)
     button("Снять обе ноги", function()
-        CONFIG.korbloxR, CONFIG.korbloxL = false, false
         if setKorbloxR then setKorbloxR(false) end
         if setKorbloxL then setKorbloxL(false) end
     end)
+    setForce = row("Жёсткая фиксация", CONFIG.force, function(v)
+        CONFIG.force = v
+        enforce()
+    end, 26)
 
-    section("ГОЛОВА")
+    panel = pages.head
+    section("АКСЕССУАРЫ")
     for _, a in ipairs(ACCS) do
         button(a.name, function() setAcc(a.id) end)
     end
@@ -1374,17 +1407,20 @@ local function build()
         accOffsetY = v
         if accCurrent ~= 0 then reAcc() end
     end, 0.05)
-
-    setForce = row("Жёсткая фиксация", CONFIG.force, function(v)
-        CONFIG.force = v
+    button("Вернуть голову", function()
+        CONFIG.headless = false
+        if setHeadless then setHeadless(false) end
+        for _, c in ipairs(targets()) do pcall(applyHeadless, c, false) end
         enforce()
-    end, 26)
+    end)
 
+    panel = pages.move
     section("ДВИЖЕНИЕ")
-    button("Прыжок выкл", function() setJumpMode("off") end)
-    button("Режим: полёт", function() setJumpMode("fly") end, true)
-    button("Режим: отскок от земли", function() setJumpMode("ground") end, true)
-    slider("Прыжков в воздухе (полёт)", -1, 10, CONFIG.jumpLimit, function(v)
+    setInf = row("Бесконечный прыжок", CONFIG.infJump, function(v)
+        CONFIG.infJump = v
+        airJumps = 0
+    end)
+    slider("Прыжков в воздухе", -1, 10, CONFIG.jumpLimit, function(v)
         CONFIG.jumpLimit = v
         airJumps = 0
     end, 1, function(v)
@@ -1393,14 +1429,21 @@ local function build()
         return tostring(v)
     end)
 
+    panel = pages.cam
     section("КАМЕРА")
     slider("FOV", 40, 120, fovTarget, function(v)
         fovTarget = v
         applyFov()
     end, 1)
 
-    section("НЕБО")
-    button("Небо выкл", function() applySky("off") end)
+    local skyPage = pages.sky
+    local sl = skyPage:FindFirstChildOfClass("UIListLayout")
+    if sl then sl:Destroy() end
+    local grid = Instance.new("UIGridLayout", skyPage)
+    grid.CellSize = UDim2.new(0.333, -4, 0, 26)
+    grid.CellPadding = UDim2.new(0, 4, 0, 4)
+    panel = skyPage
+    button("Выкл", function() applySky("off") end)
     button("Ночь", function() applySky("night") end)
     button("Космос", function() applySky("space") end)
     button("Закат", function() applySky("sunset") end)
@@ -1413,6 +1456,7 @@ local function build()
     button("Матрица", function() applySky("matrix") end)
     button("Кровь", function() applySky("blood") end)
 
+    panel = pages.fps
     section("FPS")
     setBoost = row("FPS Boost", FPS.boost, function(v)
         FPS.boost = v
@@ -1436,18 +1480,13 @@ local function build()
         setCap(v)
     end, 5)
 
+    panel = pages.misc
     section("ПРОЧЕЕ")
     button("Аксессуар заново", function()
         if accCurrent == 0 then accCurrent = ACCS[1].id end
         pcall(clearAcc)
         accAt = 0
         task.spawn(function() pcall(applyAcc, accCurrent) end)
-    end)
-    button("Вернуть голову", function()
-        CONFIG.headless = false
-        if setHeadless then setHeadless(false) end
-        for _, c in ipairs(targets()) do pcall(applyHeadless, c, false) end
-        enforce()
     end)
     button("Переприменить", function()
         CONFIG.headless, CONFIG.korbloxR, CONFIG.korbloxL, CONFIG.force = true, true, true, true
@@ -1484,11 +1523,14 @@ local function build()
         local hum = char and char:FindFirstChildOfClass("Humanoid")
         print("[Venice] риг:", hum and hum.RigType.Name or "нет")
         print("[Venice] weld-режим:", tostring(weldMode))
-        print("[Venice] CreateMeshPartAsync:", meshCache and "ок" or "недоступен")
-        print("[Venice] корблокс R:", CONFIG.korbloxR, "L:", CONFIG.korbloxL)
+        print("[Venice] CreateMeshPartAsync: R=", meshCache.R and "ок" or "нет", "L=", meshCache.L and "ок" or "нет")
+        print("[Venice] ноги: правая=", tostring(CONFIG.korbloxR), "левая=", tostring(CONFIG.korbloxL))
+        for _, s in ipairs(SIDE_LIST) do
+            print("  сторона", s, "надето:", tostring(korbloxOk(char or LP.Character or {}, s)))
+        end
         print("[Venice] аксессуар:", accCurrent, "| на голове:", tostring(hasAcc()), "| статус:", accLast, "| смещение:", accOffsetY)
         print("[Venice] частей в папке:", partsFolder and #partsFolder:GetChildren() or 0)
-        print("[Venice] режим прыжка:", CONFIG.jumpMode, "лимит:", CONFIG.jumpLimit, "счётчик:", airJumps, "пробел:", tostring(holdingJump()))
+        print("[Venice] инф.прыжок:", tostring(CONFIG.infJump), "лимит:", CONFIG.jumpLimit, "счётчик:", airJumps, "пробел:", tostring(holdingJump()))
         print("[Venice] fps:", tostring(FPS.boost), "частиц убито:", #killedParts, "эффектов:", #killedFx)
         print("[Venice] FOV:", tostring(fovTarget), "небо:", SKY.mode)
         if char then
@@ -1503,7 +1545,7 @@ local function build()
     end)
     button("Убрать всё", function()
         CONFIG.headless, CONFIG.korbloxR, CONFIG.korbloxL, CONFIG.force = false, false, false, false
-        setJumpMode("off")
+        CONFIG.infJump = false
         accCurrent = 0
         FPS.boost, FPS.shadowsOff, FPS.fxOff, FPS.partsOff = false, false, false, false
         if setHeadless then setHeadless(false) end
@@ -1511,6 +1553,7 @@ local function build()
         if setKorbloxL then setKorbloxL(false) end
         if setForce then setForce(false) end
         if setBoost then setBoost(false) end
+        if setInf then setInf(false) end
         syncFps()
         for _, c in ipairs(targets()) do
             pcall(applyHeadless, c, false)
@@ -1522,18 +1565,19 @@ local function build()
         pcall(applyFov)
     end)
 
-    panel = savedPanel
+    panel = shell
+    setTab("look")
 
     local drag, ds, sp
     head.InputBegan:Connect(function(i)
         if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
-            drag, ds, sp = true, i.Position, panel.Position
+            drag, ds, sp = true, i.Position, shell.Position
         end
     end)
     track(UIS.InputChanged:Connect(function(i)
         if drag and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
             local d = i.Position - ds
-            panel.Position = UDim2.new(sp.X.Scale, sp.X.Offset + d.X, sp.Y.Scale, sp.Y.Offset + d.Y)
+            shell.Position = UDim2.new(sp.X.Scale, sp.X.Offset + d.X, sp.Y.Scale, sp.Y.Offset + d.Y)
         end
     end))
     track(UIS.InputEnded:Connect(function(i)
@@ -1541,6 +1585,8 @@ local function build()
             drag = false
         end
     end))
+
+    panel = shell
 
     gui.Destroying:Connect(function()
         pcall(function() RunS:UnbindFromRenderStep("VeniceEnforce") end)
