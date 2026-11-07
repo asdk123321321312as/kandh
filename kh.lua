@@ -2,7 +2,7 @@ if getgenv().VeniceCos then pcall(function() getgenv().VeniceCos:Destroy() end) 
 if getgenv().VeniceCosConns then
     for _, c in ipairs(getgenv().VeniceCosConns) do pcall(function() c:Disconnect() end) end
 end
-getgenv().VeniceCosConns = {} -- ываыаываыв
+getgenv().VeniceCosConns = {}
 
 local ref = cloneref or function(s) return s end
 local Players  = ref(game:GetService("Players"))
@@ -337,8 +337,8 @@ local function applyAcc(id)
         end
 
         local w = Instance.new("WeldConstraint")
-        w.Part0 = head
-        w.Part1 = handle
+        w.Part0 = handle
+        w.Part1 = head
         w.Parent = handle
         return "приварено (папка)"
     end)
@@ -532,9 +532,12 @@ local function cleanupParts(list)
     for _, p in ipairs(partsFolder:GetChildren()) do
         local w = p:FindFirstChildWhichIsA("WeldConstraint")
         local alive = false
-        if w and w.Part1 then
+        if w then
             for _, c in ipairs(list) do
-                if w.Part1:IsDescendantOf(c) then alive = true break end
+                if (w.Part0 and w.Part0:IsDescendantOf(c)) or (w.Part1 and w.Part1:IsDescendantOf(c)) then
+                    alive = true
+                    break
+                end
             end
         end
         if not alive then pcall(function() p:Destroy() end) end
@@ -1462,7 +1465,7 @@ local function build()
         end
     end)
 
-    print("[Venice] v22 · Z меню")
+    print("[Venice] v23 · Z меню")
 end
 
 build()
