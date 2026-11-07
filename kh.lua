@@ -209,6 +209,21 @@ local function getFolder()
     return f
 end
 
+-- ============================== свой персонаж ==============================
+
+local function myChar()
+    local c = LP.Character
+    if c and c:FindFirstChild("Head") then return c end
+    if os.clock() - scanAt > 0.3 then refreshScan() end
+    for _, m in ipairs(scanCache) do
+        if m.Parent and m:FindFirstChild("Head") then return m end
+    end
+    local cam = WS.CurrentCamera
+    local subj = cam and cam.CameraSubject
+    if subj and subj.Parent and subj.Parent:FindFirstChild("Head") then return subj.Parent end
+    return nil
+end
+
 -- ============================== аксессуары ==============================
 
 local ACC_ATTR = "VeniceHatPart"
@@ -232,46 +247,59 @@ local function clearAcc()
     for _, p in ipairs(accParts()) do pcall(function() p:Destroy() end) end
 end
 
+local function grab(container)
+    for _, o in ipairs(container) do
+        if o:IsA("Accessory") or o:IsA("Hat") then return o end
+        for _, d in ipairs(o:GetDescendants()) do
+            if d:IsA("Accessory") or d:IsA("Hat") then return d end
+        end
+    end
+    for _, o in ipairs(container) do
+        if o:IsA("BasePart") then return o end
+        for _, d in ipairs(o:GetDescendants()) do
+            if d:IsA("BasePart") then return d end
+        end
+    end
+end
+
 local function loadAcc(id)
+    local errs = {}
+
     local ok, objs = pcall(function() return game:GetObjects("rbxassetid://" .. id) end)
-    if ok and objs then
-        for _, o in ipairs(objs) do
-            if o:IsA("Accessory") or o:IsA("Hat") then return o end
-            for _, d in ipairs(o:GetDescendants()) do
-                if d:IsA("Accessory") or d:IsA("Hat") then return d end
-            end
-        end
-        for _, o in ipairs(objs) do
-            if o:IsA("BasePart") and o.Name == "Handle" then return o end
-            for _, d in ipairs(o:GetDescendants()) do
-                if d:IsA("BasePart") and d.Name == "Handle" then return d end
-            end
-        end
+    if ok and objs and #objs > 0 then
+        local g = grab(objs)
+        if g then return g end
+        table.insert(errs, "GetObjects без частей")
+    else
+        table.insert(errs, "GetObjects " .. tostring(objs))
     end
 
     local ok2, model = pcall(function() return game:GetService("InsertService"):LoadAsset(id) end)
     if ok2 and model then
-        for _, d in ipairs(model:GetDescendants()) do
-            if d:IsA("Accessory") or d:IsA("Hat") then return d end
-        end
-        for _, d in ipairs(model:GetDescendants()) do
-            if d:IsA("BasePart") and d.Name == "Handle" then return d end
-        end
+        local g = grab(model:GetChildren())
+        if g then return g end
+        table.insert(errs, "LoadAsset без частей")
+    else
+        table.insert(errs, "LoadAsset " .. tostring(model))
     end
-    return nil
+
+    return nil, table.concat(errs, " | ")
 end
 
 local function applyAcc(id)
     if accBusy then return end
-    local char = LP.Character
+    local char = myChar()
     local head = char and char:FindFirstChild("Head")
-    if not head or not head:IsA("BasePart") then accLast = "нет головы" return end
+    if not head or not head:IsA("BasePart") then
+        accLast = "нет головы | Character=" .. tostring(LP.Character)
+        return
+    end
     if hasAcc() then return end
     accBusy = true
 
     local ok, res = pcall(function()
-        local found = loadAcc(id)
-        if not found then error("ассет не загрузился") end
+        local found, why = loadAcc(id)
+        if not found then error("ассет: " .. tostring(why)) end
 
         local handle
         if found:IsA("Accessory") or found:IsA("Hat") then
@@ -293,6 +321,12 @@ local function applyAcc(id)
         handle.Transparency = 0
         pcall(function() handle.Massless = true end)
         handle.Parent = getFolder()
+
+        handle.LocalTransparencyModifier = 0
+        local biggest = math.max(handle.Size.X, handle.Size.Y, handle.Size.Z)
+        if biggest < 0.25 then
+            handle.Size = handle.Size * (0.6 / math.max(biggest, 0.01))
+        end
 
         local att = handle:FindFirstChildWhichIsA("Attachment")
         if att then
@@ -550,7 +584,7 @@ local function infJump()
     local now = os.clock()
     if now - lastJump < 0.04 then return end
 
-    local char = LP.Character
+    local char = myChar()
     local hum = char and char:FindFirstChildOfClass("Humanoid")
     if not hum or hum.Health <= 0 then return end
     local root = hum.RootPart
@@ -583,7 +617,7 @@ track(UIS.JumpRequest:Connect(function() pcall(infJump) end))
 
 track(RunS.Stepped:Connect(function()
     if not CONFIG.infJump then return end
-    local char = LP.Character
+    local char = myChar()
     local hum = char and char:FindFirstChildOfClass("Humanoid")
     if hum and hum.FloorMaterial ~= Enum.Material.Air then airJumps = 0 end
 end))
@@ -957,6 +991,18 @@ end
 if LP.Character then watchChar(LP.Character) end
 track(LP.CharacterAdded:Connect(watchChar))
 track(LP.CharacterAppearanceLoaded:Connect(enforce))
+
+local watched = setmetatable({}, { __mode = "k" })
+task.spawn(function()
+    while true do
+        task.wait(0.5)
+        local c = myChar()
+        if c and not watched[c] then
+            watched[c] = true
+            watchChar(c)
+        end
+    end
+end)
 
 track(WS.ChildAdded:Connect(function(m)
     if not m:IsA("Model") then return end
@@ -1340,6 +1386,10 @@ local function build()
     button("Диагностика", function()
         local list = targets()
         print("[Venice] целей найдено:", #list)
+        print("[Venice] LP.Character:", tostring(LP.Character))
+        local cs = WS.CurrentCamera and WS.CurrentCamera.CameraSubject
+        print("[Venice] CameraSubject:", tostring(cs and cs.Parent))
+        print("[Venice] myChar:", tostring(myChar()))
         for _, m in ipairs(list) do
             print("  модель:", m:GetFullName())
         end
@@ -1360,7 +1410,7 @@ local function build()
         end
         for _, p in ipairs(accParts()) do
             local w = p:FindFirstChildWhichIsA("WeldConstraint")
-            print("  шапка:", p:GetFullName(), "| вельд:", w and (w.Part0 and w.Part0.Name or "?") .. "->" .. (w.Part1 and w.Part1.Name or "?"))
+            print("  шапка:", p:GetFullName(), "| вельд:", w and ((w.Part0 and w.Part0.Name or "?") .. "->" .. (w.Part1 and w.Part1.Name or "?")))
         end
     end)
     button("Убрать всё", function()
@@ -1412,7 +1462,7 @@ local function build()
         end
     end)
 
-    print("[Venice] v21 · Z меню")
+    print("[Venice] v22 · Z меню")
 end
 
 build()
@@ -1435,6 +1485,8 @@ track(UIS.InputBegan:Connect(function(input, gp)
     if UIS:GetFocusedTextBox() then return end
     setOpen()
 end))
+
+pcall(getFolder)
 
 task.wait(1.2)
 enforce()
