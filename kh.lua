@@ -2,7 +2,7 @@ if getgenv().VeniceCos then pcall(function() getgenv().VeniceCos:Destroy() end) 
 if getgenv().VeniceCosConns then
     for _, c in ipairs(getgenv().VeniceCosConns) do pcall(function() c:Disconnect() end) end
 end
-getgenv().VeniceCosConns = {}
+getgenv().VeniceCosConns = {} -- пизда
 
 local ref = cloneref or function(s) return s end
 local Players  = ref(game:GetService("Players"))
@@ -18,7 +18,7 @@ while not LP do task.wait() end
 
 local function track(c) table.insert(getgenv().VeniceCosConns, c) return c end
 
-local CONFIG = { korblox = true, headless = true, force = true, infJump = false, jumpLimit = 0 }
+local CONFIG = { korblox = true, headless = true, force = true, infJump = false, jumpLimit = -1 }
 local FPS = { boost = false, shadowsOff = false, fxOff = false, partsOff = false, cap = 240 }
 
 local ACCS = {
@@ -582,10 +582,11 @@ end))
 local lastJump = 0
 local airJumps = 0
 
-local function infJump()
+local function infJump(auto)
     if not CONFIG.infJump then return end
     local now = os.clock()
     if now - lastJump < 0.04 then return end
+    if auto and now - lastJump < 0.15 then return end
 
     local char = LP.Character or myChar()
     local hum = char and char:FindFirstChildOfClass("Humanoid")
@@ -597,7 +598,7 @@ local function infJump()
     if grounded then
         airJumps = 0
     else
-        if CONFIG.jumpLimit > 0 and airJumps >= CONFIG.jumpLimit then return end
+        if CONFIG.jumpLimit >= 0 and airJumps >= CONFIG.jumpLimit then return end
         airJumps = airJumps + 1
     end
     lastJump = now
@@ -622,7 +623,10 @@ track(RunS.Stepped:Connect(function()
     if not CONFIG.infJump then return end
     local char = LP.Character or myChar()
     local hum = char and char:FindFirstChildOfClass("Humanoid")
-    if hum and hum.FloorMaterial ~= Enum.Material.Air then airJumps = 0 end
+    if hum and hum.FloorMaterial ~= Enum.Material.Air then
+        airJumps = 0
+        if CONFIG.jumpLimit == 0 then pcall(infJump, true) end
+    end
 end))
 
 -- ============================== небо ==============================
@@ -865,7 +869,7 @@ local function setParticles(off)
             if t then
                 if orig.wave ~= nil then t.WaterWaveSize = orig.wave end
                 if orig.refl ~= nil then t.WaterReflectance = orig.refl end
-                if orig.deco ~= nil then t.Decoration = orig.deco end
+                if orig.deco ~= nil then t.Deco = orig.deco end
             end
         end)
     end
@@ -1305,10 +1309,14 @@ local function build()
         CONFIG.infJump = v
         airJumps = 0
     end)
-    slider("Прыжков в воздухе", 0, 10, CONFIG.jumpLimit, function(v)
+    slider("Прыжков в воздухе", -1, 10, CONFIG.jumpLimit, function(v)
         CONFIG.jumpLimit = v
         airJumps = 0
-    end, 1, function(v) if v == 0 then return "∞" end return tostring(v) end)
+    end, 1, function(v)
+        if v < 0 then return "∞" end
+        if v == 0 then return "бхоп" end
+        return tostring(v)
+    end)
 
     section("КАМЕРА")
     slider("FOV", 40, 120, fovTarget, function(v)
@@ -1465,7 +1473,7 @@ local function build()
         end
     end)
 
-    print("[Venice] v25 · Z меню")
+    print("[Venice] v26 · Z меню")
 end
 
 build()
