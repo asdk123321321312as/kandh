@@ -2,7 +2,7 @@ if getgenv().VeniceCos then pcall(function() getgenv().VeniceCos:Destroy() end) 
 if getgenv().VeniceCosConns then
     for _, c in ipairs(getgenv().VeniceCosConns) do pcall(function() c:Disconnect() end) end
 end
-getgenv().VeniceCosConns = {} -- ываываываываы
+getgenv().VeniceCosConns = {}
 
 local ref = cloneref or function(s) return s end
 local Players  = ref(game:GetService("Players"))
@@ -581,27 +581,19 @@ end))
 
 local lastJump = 0
 local airJumps = 0
-local lastGrounded = 0
-
-local function jumpVel(hum)
-    if hum.UseJumpPower then return hum.JumpPower end
-    local h = hum.JumpHeight
-    if not h or h <= 0 then return 0 end
-    return math.sqrt(2 * WS.Gravity * h)
-end
 
 local function infJump()
     if not CONFIG.infJump then return end
     local now = os.clock()
-    if now - lastJump < 0.05 then return end
+    if now - lastJump < 0.04 then return end
 
-    local char = myChar()
+    local char = LP.Character or myChar()
     local hum = char and char:FindFirstChildOfClass("Humanoid")
     if not hum or hum.Health <= 0 then return end
     local root = hum.RootPart
     if not root or root.Anchored then return end
 
-    local grounded = hum.FloorMaterial ~= Enum.Material.Air or (now - lastGrounded < 0.12)
+    local grounded = hum.FloorMaterial ~= Enum.Material.Air
     if grounded then
         airJumps = 0
     else
@@ -610,24 +602,27 @@ local function infJump()
     end
     lastJump = now
 
-    local jp = jumpVel(hum)
-    if jp <= 0 then return end
-
     pcall(function() hum:ChangeState(Enum.HumanoidStateType.Jumping) end)
-    local v = root.AssemblyLinearVelocity
-    root.AssemblyLinearVelocity = Vector3.new(v.X, jp, v.Z)
+
+    local jp = hum.JumpPower
+    if not hum.UseJumpPower then
+        jp = math.sqrt(2 * WS.Gravity * hum.JumpHeight)
+    end
+    if jp and jp > 0 then
+        local v = root.AssemblyLinearVelocity
+        if v.Y < jp * 0.95 then
+            root.AssemblyLinearVelocity = Vector3.new(v.X, jp, v.Z)
+        end
+    end
 end
 
 track(UIS.JumpRequest:Connect(function() pcall(infJump) end))
 
 track(RunS.Stepped:Connect(function()
     if not CONFIG.infJump then return end
-    local char = myChar()
+    local char = LP.Character or myChar()
     local hum = char and char:FindFirstChildOfClass("Humanoid")
-    if hum and hum.FloorMaterial ~= Enum.Material.Air then
-        airJumps = 0
-        lastGrounded = os.clock()
-    end
+    if hum and hum.FloorMaterial ~= Enum.Material.Air then airJumps = 0 end
 end))
 
 -- ============================== небо ==============================
@@ -1309,7 +1304,6 @@ local function build()
     setInf = row("Бесконечный прыжок", CONFIG.infJump, function(v)
         CONFIG.infJump = v
         airJumps = 0
-        lastGrounded = 0
     end)
     slider("Прыжков в воздухе", 0, 10, CONFIG.jumpLimit, function(v)
         CONFIG.jumpLimit = v
@@ -1471,7 +1465,7 @@ local function build()
         end
     end)
 
-    print("[Venice] v24 · Z меню")
+    print("[Venice] v25 · Z меню")
 end
 
 build()
