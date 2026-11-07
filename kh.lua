@@ -2,7 +2,7 @@ if getgenv().VeniceCos then pcall(function() getgenv().VeniceCos:Destroy() end) 
 if getgenv().VeniceCosConns then
     for _, c in ipairs(getgenv().VeniceCosConns) do pcall(function() c:Disconnect() end) end
 end
-getgenv().VeniceCosConns = {} --пизда
+getgenv().VeniceCosConns = {} -- ssdfsfdпизда
 
 local ref = cloneref or function(s) return s end
 local Players  = ref(game:GetService("Players"))
@@ -41,6 +41,8 @@ local SIDES = {
         lower = { "RightLowerLeg", "Right Lower Leg" },
         foot  = { "RightFoot", "Right Foot" },
         pat   = "Right",
+        yaw   = 0,
+        pitch = 0,
     },
     L = {
         body  = Enum.BodyPart.LeftLeg,
@@ -50,6 +52,8 @@ local SIDES = {
         lower = { "LeftLowerLeg", "Left Lower Leg" },
         foot  = { "LeftFoot", "Left Foot" },
         pat   = "Left",
+        yaw   = 0,
+        pitch = 0,
     },
 }
 local SIDE_LIST = { "R", "L" }
@@ -392,9 +396,10 @@ end
 -- ============================== коробокс ==============================
 
 local meshCache = {}
+local meshNative = {}
 local savedCharMesh = setmetatable({}, { __mode = "k" })
-local weldMode = false
-local cmMisses = 0
+local weldMode = { R = false, L = false }
+local cmMisses = { R = 0, L = 0 }
 
 local function findLegParts(char, side)
     local d = SIDES[side]
@@ -460,21 +465,31 @@ local function getMeshPart(side)
     local c = meshCache[side]
     if c and c.Parent then return c end
     local d = SIDES[side]
-    local ok, part = pcall(function()
-        return AssetS:CreateMeshPartAsync(d.mesh, Enum.CollisionFidelity.Box)
-    end)
-    if ok and typeof(part) == "MeshPart" then
-        pcall(function()
-            part.MeshId = d.mesh
-            part.TextureID = d.tex
+    local part
+    for _ = 1, 2 do
+        local ok, res = pcall(function()
+            return AssetS:CreateMeshPartAsync(d.mesh, Enum.CollisionFidelity.Box)
         end)
-        meshCache[side] = part
-        return part
+        if ok and typeof(res) == "MeshPart" and res.Size.Magnitude > 0.05 then
+            part = res
+            break
+        end
+        task.wait(0.05)
     end
-    return nil
+    if not part then return nil end
+
+    meshNative[side] = part.Size
+    pcall(function()
+        part.MeshId = d.mesh
+        part.TextureID = d.tex
+    end)
+    meshCache[side] = part
+    return part
 end
 
 local function buildKorbloxLeg(char, side, upper, lower, foot)
+    local cfg = SIDES[side]
+
     local top = upper.CFrame * CFrame.new(0, upper.Size.Y / 2, 0)
     local bottom
     if foot and foot:IsA("BasePart") then
@@ -490,26 +505,41 @@ local function buildKorbloxLeg(char, side, upper, lower, foot)
     local len = math.clamp(delta.Magnitude, 0.5, 9)
     local up = delta.Magnitude > 1e-3 and delta.Unit or Vector3.new(0, 1, 0)
     local mid = (a + b) / 2
-    local w = math.clamp(math.max(upper.Size.X, upper.Size.Z) * 1.05, 0.3, 3)
+    local w = math.clamp(math.max(upper.Size.X, upper.Size.Z) * 1.05, 0.3, 1.2)
 
     local part = getMeshPart(side)
+    local native = meshNative[side] or Vector3.new(1, 1, 1)
+
+    local rot = CFrame.new()
+    local size
+    if native.X >= native.Y and native.X >= native.Z then
+        size = Vector3.new(len, w, w)
+        rot = CFrame.Angles(0, 0, math.rad(90))
+    elseif native.Z > native.Y and native.Z > native.X then
+        size = Vector3.new(w, w, len)
+        rot = CFrame.Angles(math.rad(-90), 0, 0)
+    else
+        size = Vector3.new(w, len, w)
+    end
+
     if part then
-        pcall(function()
-            part.TextureID = SIDES[side].tex
-            part.MeshId = SIDES[side].mesh
-        end)
         part.Name = "VeniceKorbloxLeg" .. side
+        part.Size = size
     else
         part = Instance.new("Part")
         part.Name = "VeniceKorbloxLeg" .. side
         local sm = Instance.new("SpecialMesh", part)
         sm.MeshType = Enum.MeshType.FileMesh
-        sm.MeshId = SIDES[side].mesh
-        sm.TextureId = SIDES[side].tex
+        sm.MeshId = cfg.mesh
+        sm.TextureId = cfg.tex
+        sm.Scale = Vector3.new(size.X / native.X, size.Y / native.Y, size.Z / native.Z)
+        part.Size = size
     end
 
-    part.Size = Vector3.new(w, len, w)
-    part.CFrame = CFrame.lookAt(mid, mid + upper.CFrame.RightVector, up)
+    local base = CFrame.lookAt(mid, mid + upper.CFrame.RightVector, up)
+        * CFrame.Angles(math.rad(cfg.pitch or 0), math.rad(cfg.yaw or 0), 0)
+
+    part.CFrame = base * rot
     part.Anchored = false
     part.CanCollide = false
     part.CanQuery = false
@@ -540,7 +570,7 @@ local function applyKorblox(char, on, side)
     if not on then clearKorblox(char, side) return end
     if korbloxOk(char, side) then return end
 
-    if hum.RigType == Enum.HumanoidRigType.R6 and not weldMode then
+    if hum.RigType == Enum.HumanoidRigType.R6 and not weldMode[side] then
         for _, c in ipairs(char:GetChildren()) do
             if c:IsA("CharacterMesh") and c.BodyPart == d.body and c.Name ~= "VeniceKorblox" .. side then
                 savedCharMesh[char] = savedCharMesh[char] or {}
@@ -552,8 +582,7 @@ local function applyKorblox(char, on, side)
         local m = Instance.new("CharacterMesh")
         m.Name = "VeniceKorblox" .. side
         m.BodyPart = d.body
-        m.MeshId = 101851696
-        if side == "L" then m.MeshId = 139607673 end
+        m.MeshId = (side == "L") and 139607673 or 101851696
         m.OverlayTextureId = 101851254
         m.Parent = char
         return
@@ -562,6 +591,17 @@ local function applyKorblox(char, on, side)
     local upper, lower, foot = findLegParts(char, side)
     if not upper then return end
     buildKorbloxLeg(char, side, upper, lower, foot)
+end
+
+local function reKorblox()
+    for _, c in ipairs(targets()) do
+        for _, s in ipairs(SIDE_LIST) do
+            pcall(clearKorblox, c, s)
+            local on = (s == "R") and CONFIG.korbloxR or CONFIG.korbloxL
+            if on then pcall(applyKorblox, c, true, s) end
+        end
+    end
+    enforce()
 end
 
 local function cleanupParts(list)
@@ -971,8 +1011,8 @@ local function enforce()
                 if not korbloxOk(char, s) then
                     local hum = char:FindFirstChildOfClass("Humanoid")
                     if hum and hum.RigType == Enum.HumanoidRigType.R6 and not char:FindFirstChild("VeniceKorblox" .. s) then
-                        cmMisses = cmMisses + 1
-                        if cmMisses >= 3 then weldMode = true end
+                        cmMisses[s] = cmMisses[s] + 1
+                        if cmMisses[s] >= 4 then weldMode[s] = true end
                     end
                 end
                 pcall(applyKorblox, char, true, s)
@@ -1017,7 +1057,7 @@ end
 
 local function watchChar(char)
     table.clear(meshCache)
-    cmMisses = 0
+    cmMisses.R, cmMisses.L = 0, 0
     airJumps = 0
     accAt = 0
     enforce()
@@ -1397,6 +1437,16 @@ local function build()
         enforce()
     end, 26)
 
+    section("ПОДГОНКА ЛЕВОЙ")
+    slider("Разворот", -180, 180, SIDES.L.yaw, function(v)
+        SIDES.L.yaw = v
+        pcall(reKorblox)
+    end, 5, function(v) return tostring(math.floor(v + 0.5)) end)
+    row("Переворот", false, function(v)
+        SIDES.L.pitch = v and 180 or 0
+        pcall(reKorblox)
+    end, 26)
+
     panel = pages.head
     section("АКСЕССУАРЫ")
     for _, a in ipairs(ACCS) do
@@ -1509,39 +1559,29 @@ local function build()
         end
         print("[Venice] переприменено")
     end, true)
+    button("Сброс подгонки", function()
+        SIDES.L.yaw, SIDES.L.pitch = 0, 0
+        pcall(reKorblox)
+    end)
     button("Диагностика", function()
         local list = targets()
         print("[Venice] целей найдено:", #list)
         print("[Venice] LP.Character:", tostring(LP.Character))
-        local cs = WS.CurrentCamera and WS.CurrentCamera.CameraSubject
-        print("[Venice] CameraSubject:", tostring(cs and cs.Parent))
         print("[Venice] myChar:", tostring(myChar()))
-        for _, m in ipairs(list) do
-            print("  модель:", m:GetFullName())
-        end
         local char = list[1]
         local hum = char and char:FindFirstChildOfClass("Humanoid")
         print("[Venice] риг:", hum and hum.RigType.Name or "нет")
-        print("[Venice] weld-режим:", tostring(weldMode))
-        print("[Venice] CreateMeshPartAsync: R=", meshCache.R and "ок" or "нет", "L=", meshCache.L and "ок" or "нет")
+        print("[Venice] weld-режим: R=", tostring(weldMode.R), "L=", tostring(weldMode.L))
+        print("[Venice] натив R:", tostring(meshNative.R), "L:", tostring(meshNative.L))
+        print("[Venice] yaw L:", SIDES.L.yaw, "pitch L:", SIDES.L.pitch)
         print("[Venice] ноги: правая=", tostring(CONFIG.korbloxR), "левая=", tostring(CONFIG.korbloxL))
         for _, s in ipairs(SIDE_LIST) do
-            print("  сторона", s, "надето:", tostring(korbloxOk(char or LP.Character or {}, s)))
+            print("  сторона", s, "надето:", char and tostring(korbloxOk(char, s)) or "нет цели")
         end
-        print("[Venice] аксессуар:", accCurrent, "| на голове:", tostring(hasAcc()), "| статус:", accLast, "| смещение:", accOffsetY)
+        print("[Venice] аксессуар:", accCurrent, "| статус:", accLast, "| смещение:", accOffsetY)
         print("[Venice] частей в папке:", partsFolder and #partsFolder:GetChildren() or 0)
-        print("[Venice] инф.прыжок:", tostring(CONFIG.infJump), "лимит:", CONFIG.jumpLimit, "счётчик:", airJumps, "пробел:", tostring(holdingJump()))
-        print("[Venice] fps:", tostring(FPS.boost), "частиц убито:", #killedParts, "эффектов:", #killedFx)
-        print("[Venice] FOV:", tostring(fovTarget), "небо:", SKY.mode)
-        if char then
-            for _, d in ipairs(char:GetChildren()) do
-                if d:IsA("BasePart") then print("  ", d.Name, d.Size, d.Transparency) end
-            end
-        end
-        for _, p in ipairs(accParts()) do
-            local w = p:FindFirstChildWhichIsA("WeldConstraint")
-            print("  шапка:", p:GetFullName(), "| вельд:", w and ((w.Part0 and w.Part0.Name or "?") .. "->" .. (w.Part1 and w.Part1.Name or "?")))
-        end
+        print("[Venice] инф.прыжок:", tostring(CONFIG.infJump), "лимит:", CONFIG.jumpLimit)
+        print("[Venice] fps:", tostring(FPS.boost), "FOV:", tostring(fovTarget), "небо:", SKY.mode)
     end)
     button("Убрать всё", function()
         CONFIG.headless, CONFIG.korbloxR, CONFIG.korbloxL, CONFIG.force = false, false, false, false
@@ -1586,8 +1626,6 @@ local function build()
         end
     end))
 
-    panel = shell
-
     gui.Destroying:Connect(function()
         pcall(function() RunS:UnbindFromRenderStep("VeniceEnforce") end)
         pcall(function() CAS:UnbindAction("VeniceMenu") end)
@@ -1596,7 +1634,7 @@ local function build()
         end
     end)
 
-    print("[Venice] v28 · Z меню")
+    print("[Venice] v29 · Z меню")
 end
 
 build()
