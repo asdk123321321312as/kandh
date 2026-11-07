@@ -2,7 +2,7 @@ if getgenv().VeniceCos then pcall(function() getgenv().VeniceCos:Destroy() end) 
 if getgenv().VeniceCosConns then
     for _, c in ipairs(getgenv().VeniceCosConns) do pcall(function() c:Disconnect() end) end
 end
-getgenv().VeniceCosConns = {} -- аи пизда
+getgenv().VeniceCosConns = {} -- аи пиздаfsdfsdf
 
 local ref = cloneref or function(s) return s end
 local Players  = ref(game:GetService("Players"))
