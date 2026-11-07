@@ -2,7 +2,7 @@ if getgenv().VeniceCos then pcall(function() getgenv().VeniceCos:Destroy() end) 
 if getgenv().VeniceCosConns then
     for _, c in ipairs(getgenv().VeniceCosConns) do pcall(function() c:Disconnect() end) end
 end
-getgenv().VeniceCosConns = {} -- ssdfsfdпизда
+getgenv().VeniceCosConns = {} -- fff
 
 local ref = cloneref or function(s) return s end
 local Players  = ref(game:GetService("Players"))
@@ -35,8 +35,8 @@ local TEX = "rbxassetid://101851254"
 local SIDES = {
     R = {
         body  = Enum.BodyPart.RightLeg,
-        mesh  = "rbxassetid://101851696",
-        tex   = TEX,
+        meshId = "rbxassetid://101851696",
+        texId  = TEX,
         upper = { "RightUpperLeg", "Right Leg", "RightLeg" },
         lower = { "RightLowerLeg", "Right Lower Leg" },
         foot  = { "RightFoot", "Right Foot" },
@@ -46,8 +46,9 @@ local SIDES = {
     },
     L = {
         body  = Enum.BodyPart.LeftLeg,
-        mesh  = "rbxassetid://139607673",
-        tex   = TEX,
+        catalog = 139607673,
+        meshId = nil,
+        texId  = TEX,
         upper = { "LeftUpperLeg", "Left Leg", "LeftLeg" },
         lower = { "LeftLowerLeg", "Left Lower Leg" },
         foot  = { "LeftFoot", "Left Foot" },
@@ -401,6 +402,67 @@ local savedCharMesh = setmetatable({}, { __mode = "k" })
 local weldMode = { R = false, L = false }
 local cmMisses = { R = 0, L = 0 }
 
+local function stripJoints(part)
+    for _, d in ipairs(part:GetChildren()) do
+        if d:IsA("JointInstance") or d:IsA("WeldConstraint") or d:IsA("Motor6D") then
+            pcall(function() d:Destroy() end)
+        end
+    end
+end
+
+local function findPartIn(container, out)
+    for _, o in ipairs(container) do
+        if out[1] then return end
+        if o:IsA("BasePart") then
+            out[1] = o
+            return
+        end
+        if o:IsA("Model") or o:IsA("Folder") or o:IsA("Accessory") then
+            findPartIn(o:GetChildren(), out)
+        end
+    end
+end
+
+local function loadCatalogPart(id)
+    if not id then return nil end
+    local ok, objs = pcall(function() return game:GetObjects("rbxassetid://" .. tostring(id)) end)
+    if not ok or not objs or #objs == 0 then return nil end
+    local out = {}
+    local ok2 = pcall(findPartIn, objs, out)
+    local part = ok2 and out[1]
+    if not part then return nil end
+    stripJoints(part)
+    return part
+end
+
+local function meshOf(part)
+    if part:IsA("MeshPart") then
+        return part.MeshId, part.TextureID
+    end
+    local sm = part:FindFirstChildWhichIsA("SpecialMesh")
+    if sm then
+        return sm.MeshId, sm.TextureId
+    end
+    return nil, nil
+end
+
+local function resolveAsset(side)
+    local cfg = SIDES[side]
+    if cfg.meshId then return cfg.meshId, cfg.texId end
+    if not cfg.catalog then return nil end
+
+    local part = loadCatalogPart(cfg.catalog)
+    if not part then return nil end
+    local mid, tex = meshOf(part)
+    pcall(function() part:Destroy() end)
+    if not mid or mid == "" then return nil end
+
+    cfg.meshId = mid
+    if tex and tex ~= "" then cfg.texId = tex end
+    print("[Venice] " .. side .. " нога: меш " .. tostring(mid) .. " | текстура " .. tostring(cfg.texId))
+    return cfg.meshId, cfg.texId
+end
+
 local function findLegParts(char, side)
     local d = SIDES[side]
     local upper, lower, foot
@@ -464,11 +526,14 @@ end
 local function getMeshPart(side)
     local c = meshCache[side]
     if c and c.Parent then return c end
-    local d = SIDES[side]
+    local cfg = SIDES[side]
+    local mid, tex = resolveAsset(side)
+    if not mid then return nil end
+
     local part
     for _ = 1, 2 do
         local ok, res = pcall(function()
-            return AssetS:CreateMeshPartAsync(d.mesh, Enum.CollisionFidelity.Box)
+            return AssetS:CreateMeshPartAsync(mid, Enum.CollisionFidelity.Box)
         end)
         if ok and typeof(res) == "MeshPart" and res.Size.Magnitude > 0.05 then
             part = res
@@ -480,8 +545,8 @@ local function getMeshPart(side)
 
     meshNative[side] = part.Size
     pcall(function()
-        part.MeshId = d.mesh
-        part.TextureID = d.tex
+        part.MeshId = mid
+        if tex then part.TextureID = tex end
     end)
     meshCache[side] = part
     return part
@@ -508,7 +573,14 @@ local function buildKorbloxLeg(char, side, upper, lower, foot)
     local w = math.clamp(math.max(upper.Size.X, upper.Size.Z) * 1.05, 0.3, 1.2)
 
     local part = getMeshPart(side)
-    local native = meshNative[side] or Vector3.new(1, 1, 1)
+    local native = meshNative[side]
+
+    if not part and cfg.catalog then
+        part = loadCatalogPart(cfg.catalog)
+        if part then native = part.Size end
+    end
+    if not part then return end
+    native = native or Vector3.new(1, 1, 1)
 
     local rot = CFrame.new()
     local size
@@ -522,17 +594,17 @@ local function buildKorbloxLeg(char, side, upper, lower, foot)
         size = Vector3.new(w, len, w)
     end
 
-    if part then
-        part.Name = "VeniceKorbloxLeg" .. side
+    part.Name = "VeniceKorbloxLeg" .. side
+
+    local sm = part:FindFirstChildWhichIsA("SpecialMesh")
+    if part:IsA("MeshPart") or not sm then
         part.Size = size
     else
-        part = Instance.new("Part")
-        part.Name = "VeniceKorbloxLeg" .. side
-        local sm = Instance.new("SpecialMesh", part)
-        sm.MeshType = Enum.MeshType.FileMesh
-        sm.MeshId = cfg.mesh
-        sm.TextureId = cfg.tex
-        sm.Scale = Vector3.new(size.X / native.X, size.Y / native.Y, size.Z / native.Z)
+        sm.Scale = Vector3.new(
+            sm.Scale.X * (size.X / math.max(native.X, 0.01)),
+            sm.Scale.Y * (size.Y / math.max(native.Y, 0.01)),
+            sm.Scale.Z * (size.Z / math.max(native.Z, 0.01))
+        )
         part.Size = size
     end
 
@@ -546,6 +618,8 @@ local function buildKorbloxLeg(char, side, upper, lower, foot)
     part.CanTouch = false
     part.CastShadow = true
     pcall(function() part.Massless = true end)
+    part.Transparency = 0
+    part.LocalTransparencyModifier = 0
     part.TopSurface = Enum.SurfaceType.Smooth
     part.BottomSurface = Enum.SurfaceType.Smooth
     part.Parent = getFolder()
@@ -571,21 +645,24 @@ local function applyKorblox(char, on, side)
     if korbloxOk(char, side) then return end
 
     if hum.RigType == Enum.HumanoidRigType.R6 and not weldMode[side] then
-        for _, c in ipairs(char:GetChildren()) do
-            if c:IsA("CharacterMesh") and c.BodyPart == d.body and c.Name ~= "VeniceKorblox" .. side then
-                savedCharMesh[char] = savedCharMesh[char] or {}
-                savedCharMesh[char][side] = { mesh = c.MeshId, tex = c.OverlayTextureId }
-                pcall(function() c:Destroy() end)
-                break
+        local mid, tex = resolveAsset(side)
+        if mid then
+            for _, c in ipairs(char:GetChildren()) do
+                if c:IsA("CharacterMesh") and c.BodyPart == d.body and c.Name ~= "VeniceKorblox" .. side then
+                    savedCharMesh[char] = savedCharMesh[char] or {}
+                    savedCharMesh[char][side] = { mesh = c.MeshId, tex = c.OverlayTextureId }
+                    pcall(function() c:Destroy() end)
+                    break
+                end
             end
+            local m = Instance.new("CharacterMesh")
+            m.Name = "VeniceKorblox" .. side
+            m.BodyPart = d.body
+            m.MeshId = mid
+            m.OverlayTextureId = tex
+            m.Parent = char
+            return
         end
-        local m = Instance.new("CharacterMesh")
-        m.Name = "VeniceKorblox" .. side
-        m.BodyPart = d.body
-        m.MeshId = (side == "L") and 139607673 or 101851696
-        m.OverlayTextureId = 101851254
-        m.Parent = char
-        return
     end
 
     local upper, lower, foot = findLegParts(char, side)
@@ -1572,7 +1649,8 @@ local function build()
         local hum = char and char:FindFirstChildOfClass("Humanoid")
         print("[Venice] риг:", hum and hum.RigType.Name or "нет")
         print("[Venice] weld-режим: R=", tostring(weldMode.R), "L=", tostring(weldMode.L))
-        print("[Venice] натив R:", tostring(meshNative.R), "L:", tostring(meshNative.L))
+        print("[Venice] меш R:", tostring(SIDES.R.meshId), "| L:", tostring(SIDES.L.meshId))
+        print("[Venice] текстура L:", tostring(SIDES.L.texId))
         print("[Venice] yaw L:", SIDES.L.yaw, "pitch L:", SIDES.L.pitch)
         print("[Venice] ноги: правая=", tostring(CONFIG.korbloxR), "левая=", tostring(CONFIG.korbloxL))
         for _, s in ipairs(SIDE_LIST) do
@@ -1580,7 +1658,6 @@ local function build()
         end
         print("[Venice] аксессуар:", accCurrent, "| статус:", accLast, "| смещение:", accOffsetY)
         print("[Venice] частей в папке:", partsFolder and #partsFolder:GetChildren() or 0)
-        print("[Venice] инф.прыжок:", tostring(CONFIG.infJump), "лимит:", CONFIG.jumpLimit)
         print("[Venice] fps:", tostring(FPS.boost), "FOV:", tostring(fovTarget), "небо:", SKY.mode)
     end)
     button("Убрать всё", function()
@@ -1634,7 +1711,7 @@ local function build()
         end
     end)
 
-    print("[Venice] v29 · Z меню")
+    print("[Venice] v30 · Z меню")
 end
 
 build()
