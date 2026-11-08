@@ -613,6 +613,7 @@ local function applyAura(char, on)
         ring.LightInfluence = 0
         ring.RotSpeed = NumberRange.new(-120, 120)
         ring.Color = rainbowSeq(AURA.hue)
+        ring:SetAttribute("VeniceAura", true)
         ring.Parent = att
         table.insert(made, ring)
 
@@ -637,6 +638,7 @@ local function applyAura(char, on)
         mist.LightEmission = 1
         mist.LightInfluence = 0
         mist.Color = rainbowSeq(AURA.hue + 0.3)
+        mist:SetAttribute("VeniceAura", true)
         mist.Parent = att
         table.insert(made, mist)
 
@@ -942,6 +944,10 @@ local function isEmitter(d)
         or d:IsA("Smoke") or d:IsA("Fire") or d:IsA("Sparkles")
 end
 
+local function isAuraFx(d)
+    return d:GetAttribute("VeniceAura") == true
+end
+
 local function capture()
     if orig.done then return end
     orig.done = true
@@ -958,6 +964,7 @@ local function capture()
 end
 
 local function killEmitter(d)
+    if isAuraFx(d) then return end
     if not d.Enabled then return end
     d.Enabled = false
     table.insert(killedParts, d)
@@ -1011,7 +1018,7 @@ local function setParticles(off)
         capture()
         local n = 0
         for _, d in ipairs(WS:GetDescendants()) do
-            if isEmitter(d) and d.Enabled and not d:FindFirstAncestorOfClass("ScreenGui") then
+            if isEmitter(d) and d.Enabled and not isAuraFx(d) then
                 d.Enabled = false
                 table.insert(killedParts, d)
                 n = n + 1
@@ -1656,7 +1663,8 @@ local function build()
         print("[Venice] аксессуар:", accCurrent, "| на голове:", tostring(hasAcc()), "| статус:", accLast)
         print("[Venice] частей в папке:", partsFolder and #partsFolder:GetChildren() or 0)
         print("[Venice] инф.прыжок:", tostring(CONFIG.infJump), "лимит:", CONFIG.jumpLimit)
-        print("[Venice] fps:", tostring(FPS.boost), "FOV:", tostring(fovTarget), "небо:", SKY.mode)
+        print("[Venice] fps:", tostring(FPS.boost), "частиц убито:", #killedParts, "эффектов:", #killedFx)
+        print("[Venice] FOV:", tostring(fovTarget), "небо:", SKY.mode)
     end)
     button("Убрать всё", function()
         CONFIG.headless, CONFIG.korblox, CONFIG.force = false, false, false
@@ -1712,7 +1720,7 @@ local function build()
         end
     end)
 
-    print("[Venice] v31 · Z меню")
+    print("[Venice] v32 · Z меню")
 end
 
 build()
