@@ -2,7 +2,7 @@ if getgenv().VeniceCos then pcall(function() getgenv().VeniceCos:Destroy() end) 
 if getgenv().VeniceCosConns then
     for _, c in ipairs(getgenv().VeniceCosConns) do pcall(function() c:Disconnect() end) end
 end
-getgenv().VeniceCosConns = {} --пизда
+getgenv().VeniceCosConns = {}
 
 local ref = cloneref or function(s) return s end
 local Players  = ref(game:GetService("Players"))
@@ -20,7 +20,7 @@ local function track(c) table.insert(getgenv().VeniceCosConns, c) return c end
 
 local CONFIG = { korblox = true, headless = true, force = true, infJump = false, jumpLimit = -1 }
 local FPS = { boost = false, shadowsOff = false, fxOff = false, partsOff = false, cap = 240 }
-local AURA = { on = false, size = 1, speed = 1, hue = 0 }
+local AURA = { on = false, size = 1, speed = 1, hue = 0, mode = "rainbow", color = Color3.fromRGB(152, 132, 255), style = "both" }
 
 local ACCS = {
     { id = 132809431,  name = "Doomsekkar" },
@@ -373,8 +373,9 @@ end
 
 local meshCache = nil
 local savedCharMesh = {}
+local charMode = setmetatable({}, { __mode = "k" })
+local cmTries  = setmetatable({}, { __mode = "k" })
 local weldMode = false
-local cmMisses = 0
 
 local function findLegParts(char)
     local upper = char:FindFirstChild("RightUpperLeg") or char:FindFirstChild("Right Leg") or char:FindFirstChild("RightLeg")
@@ -394,7 +395,7 @@ local function findLegParts(char)
 end
 
 local function findKorbloxPart(char)
-    if not partsFolder then return nil end
+    if not partsFolder or not partsFolder.Parent then return nil end
     for _, p in ipairs(partsFolder:GetChildren()) do
         if p:IsA("BasePart") and p.Name == "VeniceKorbloxLeg" then
             local w = p:FindFirstChildWhichIsA("WeldConstraint")
@@ -503,24 +504,35 @@ local function applyKorblox(char, on)
     local hum = char:FindFirstChildOfClass("Humanoid")
     if not hum then return end
 
-    if not on then clearKorblox(char) return end
+    if not on then
+        clearKorblox(char)
+        charMode[char] = nil
+        cmTries[char] = nil
+        return
+    end
     if korbloxOk(char) then return end
 
-    if hum.RigType == Enum.HumanoidRigType.R6 and not weldMode then
-        for _, d in ipairs(char:GetChildren()) do
-            if d:IsA("CharacterMesh") and d.BodyPart == Enum.BodyPart.RightLeg and d.Name ~= "VeniceKorblox" then
-                savedCharMesh[char] = { mesh = d.MeshId, tex = d.OverlayTextureId }
-                pcall(function() d:Destroy() end)
-                break
+    if hum.RigType == Enum.HumanoidRigType.R6 and charMode[char] ~= "weld" then
+        cmTries[char] = (cmTries[char] or 0) + 1
+        if cmTries[char] > 5 then
+            charMode[char] = "weld"
+            weldMode = true
+        else
+            for _, d in ipairs(char:GetChildren()) do
+                if d:IsA("CharacterMesh") and d.BodyPart == Enum.BodyPart.RightLeg and d.Name ~= "VeniceKorblox" then
+                    savedCharMesh[char] = { mesh = d.MeshId, tex = d.OverlayTextureId }
+                    pcall(function() d:Destroy() end)
+                    break
+                end
             end
+            local m = Instance.new("CharacterMesh")
+            m.Name = "VeniceKorblox"
+            m.BodyPart = Enum.BodyPart.RightLeg
+            m.MeshId = 101851696
+            m.OverlayTextureId = 101851254
+            m.Parent = char
+            return
         end
-        local m = Instance.new("CharacterMesh")
-        m.Name = "VeniceKorblox"
-        m.BodyPart = Enum.BodyPart.RightLeg
-        m.MeshId = 101851696
-        m.OverlayTextureId = 101851254
-        m.Parent = char
-        return
     end
 
     local upper, lower, foot = findLegParts(char)
@@ -529,7 +541,7 @@ local function applyKorblox(char, on)
 end
 
 local function cleanupParts(list)
-    if not partsFolder then return end
+    if not partsFolder or not partsFolder.Parent then return end
     for _, p in ipairs(partsFolder:GetChildren()) do
         local w = p:FindFirstChildWhichIsA("WeldConstraint")
         local alive = false
@@ -543,6 +555,7 @@ local function cleanupParts(list)
         end
         if not alive then pcall(function() p:Destroy() end) end
     end
+    if meshCache and not meshCache.Parent then meshCache = nil end
 end
 
 -- ============================== аура ==============================
@@ -560,6 +573,42 @@ local function rainbowSeq(phase)
     return ColorSequence.new(kp)
 end
 
+local function auraColor(off)
+    if AURA.mode == "rainbow" then return rainbow(AURA.hue + (off or 0)) end
+    return AURA.color
+end
+
+local function auraSeq(off)
+    if AURA.mode == "rainbow" then return rainbowSeq(AURA.hue + (off or 0)) end
+    return ColorSequence.new(AURA.color)
+end
+
+local AURA_COLORS = {
+    { name = "Радуга",  mode = "rainbow" },
+    { name = "Фиолет",  color = Color3.fromRGB(152, 132, 255) },
+    { name = "Красный", color = Color3.fromRGB(255, 60, 60) },
+    { name = "Оранж",   color = Color3.fromRGB(255, 140, 40) },
+    { name = "Золото",  color = Color3.fromRGB(255, 205, 60) },
+    { name = "Лайм",    color = Color3.fromRGB(160, 255, 60) },
+    { name = "Матрица", color = Color3.fromRGB(40, 255, 80) },
+    { name = "Циан",    color = Color3.fromRGB(70, 230, 255) },
+    { name = "Синий",   color = Color3.fromRGB(70, 130, 255) },
+    { name = "Розовый", color = Color3.fromRGB(255, 110, 210) },
+    { name = "Белый",   color = Color3.fromRGB(255, 255, 255) },
+    { name = "Кровь",   color = Color3.fromRGB(170, 20, 20) },
+    { name = "Лёд",     color = Color3.fromRGB(170, 225, 255) },
+    { name = "Пустота", color = Color3.fromRGB(90, 40, 160) },
+    { name = "Огонь",   color = Color3.fromRGB(255, 90, 20) },
+    { name = "Токсик",  color = Color3.fromRGB(180, 255, 40) },
+}
+
+local AURA_STYLES = {
+    { name = "Кольцо", id = "ring" },
+    { name = "Туман",  id = "mist" },
+    { name = "Оба",    id = "both" },
+    { name = "Вихрь",  id = "vortex" },
+}
+
 local function clearAura(char)
     local s = auraState[char]
     if not s then return end
@@ -569,6 +618,64 @@ end
 
 local function clearAuraAll()
     for c in pairs(auraState) do clearAura(c) end
+end
+
+local function makeRing(att, made, inward)
+    local e = Instance.new("ParticleEmitter")
+    e.Name = inward and "VeniceAuraRingIn" or "VeniceAuraRing"
+    e.Texture = "rbxasset://textures/particles/sparkles_main.dds"
+    e.Shape = Enum.ParticleEmitterShape.Disc
+    e.ShapeStyle = Enum.ParticleEmitterShapeStyle.Surface
+    e.ShapeInOut = inward and Enum.ParticleEmitterShapeInOut.Inward or Enum.ParticleEmitterShapeInOut.Outward
+    e.ShapePartial = 1
+    e.Rate = (inward and 26 or 40) * AURA.size
+    e.Lifetime = NumberRange.new(0.6, 1.1)
+    e.Speed = NumberRange.new(0.6, 2.2)
+    e.Drag = 3
+    e.Acceleration = Vector3.new(0, inward and 1.2 or 2.6, 0)
+    e.Size = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, 0.5 * AURA.size),
+        NumberSequenceKeypoint.new(0.35, 0.85 * AURA.size),
+        NumberSequenceKeypoint.new(1, 0),
+    })
+    e.Transparency = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, 0.15),
+        NumberSequenceKeypoint.new(1, 1),
+    })
+    e.LightEmission = 1
+    e.LightInfluence = 0
+    e.RotSpeed = NumberRange.new(inward and 120 or -120, inward and 240 or 120)
+    e.Color = auraSeq(inward and 0.2 or 0)
+    e:SetAttribute("VeniceAura", true)
+    e.Parent = att
+    table.insert(made, e)
+end
+
+local function makeMist(att, made)
+    local e = Instance.new("ParticleEmitter")
+    e.Name = "VeniceAuraMist"
+    e.Texture = "rbxasset://textures/particles/sparkles_main.dds"
+    e.Shape = Enum.ParticleEmitterShape.Sphere
+    e.ShapeStyle = Enum.ParticleEmitterShapeStyle.Volume
+    e.Rate = 12 * AURA.size
+    e.Lifetime = NumberRange.new(1, 1.8)
+    e.Speed = NumberRange.new(0.2, 0.9)
+    e.Drag = 4
+    e.Acceleration = Vector3.new(0, 1.1, 0)
+    e.Size = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, 1.1 * AURA.size),
+        NumberSequenceKeypoint.new(1, 0),
+    })
+    e.Transparency = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, 0.55),
+        NumberSequenceKeypoint.new(1, 1),
+    })
+    e.LightEmission = 1
+    e.LightInfluence = 0
+    e.Color = auraSeq(0.3)
+    e:SetAttribute("VeniceAura", true)
+    e.Parent = att
+    table.insert(made, e)
 end
 
 local function applyAura(char, on)
@@ -588,65 +695,24 @@ local function applyAura(char, on)
         att.Parent = root
         table.insert(made, att)
 
-        local ring = Instance.new("ParticleEmitter")
-        ring.Name = "VeniceAuraRing"
-        ring.Texture = "rbxasset://textures/particles/sparkles_main.dds"
-        ring.Shape = Enum.ParticleEmitterShape.Disc
-        ring.ShapeStyle = Enum.ParticleEmitterShapeStyle.Surface
-        ring.ShapeInOut = Enum.ParticleEmitterShapeInOut.Outward
-        ring.ShapePartial = 1
-        ring.Rate = 40 * AURA.size
-        ring.Lifetime = NumberRange.new(0.6, 1.1)
-        ring.Speed = NumberRange.new(0.6, 2.2)
-        ring.Drag = 3
-        ring.Acceleration = Vector3.new(0, 2.6, 0)
-        ring.Size = NumberSequence.new({
-            NumberSequenceKeypoint.new(0, 0.5 * AURA.size),
-            NumberSequenceKeypoint.new(0.35, 0.85 * AURA.size),
-            NumberSequenceKeypoint.new(1, 0),
-        })
-        ring.Transparency = NumberSequence.new({
-            NumberSequenceKeypoint.new(0, 0.15),
-            NumberSequenceKeypoint.new(1, 1),
-        })
-        ring.LightEmission = 1
-        ring.LightInfluence = 0
-        ring.RotSpeed = NumberRange.new(-120, 120)
-        ring.Color = rainbowSeq(AURA.hue)
-        ring:SetAttribute("VeniceAura", true)
-        ring.Parent = att
-        table.insert(made, ring)
-
-        local mist = Instance.new("ParticleEmitter")
-        mist.Name = "VeniceAuraMist"
-        mist.Texture = "rbxasset://textures/particles/sparkles_main.dds"
-        mist.Shape = Enum.ParticleEmitterShape.Sphere
-        mist.ShapeStyle = Enum.ParticleEmitterShapeStyle.Volume
-        mist.Rate = 12 * AURA.size
-        mist.Lifetime = NumberRange.new(1, 1.8)
-        mist.Speed = NumberRange.new(0.2, 0.9)
-        mist.Drag = 4
-        mist.Acceleration = Vector3.new(0, 1.1, 0)
-        mist.Size = NumberSequence.new({
-            NumberSequenceKeypoint.new(0, 1.1 * AURA.size),
-            NumberSequenceKeypoint.new(1, 0),
-        })
-        mist.Transparency = NumberSequence.new({
-            NumberSequenceKeypoint.new(0, 0.55),
-            NumberSequenceKeypoint.new(1, 1),
-        })
-        mist.LightEmission = 1
-        mist.LightInfluence = 0
-        mist.Color = rainbowSeq(AURA.hue + 0.3)
-        mist:SetAttribute("VeniceAura", true)
-        mist.Parent = att
-        table.insert(made, mist)
+        local st = AURA.style
+        if st == "ring" then
+            makeRing(att, made, false)
+        elseif st == "mist" then
+            makeMist(att, made)
+        elseif st == "vortex" then
+            makeRing(att, made, false)
+            makeRing(att, made, true)
+        else
+            makeRing(att, made, false)
+            makeMist(att, made)
+        end
 
         local light = Instance.new("PointLight")
         light.Name = "VeniceAuraLight"
         light.Brightness = 2
         light.Range = 13
-        light.Color = rainbow(AURA.hue)
+        light.Color = auraColor()
         light.Parent = att
         table.insert(made, light)
 
@@ -656,8 +722,8 @@ local function applyAura(char, on)
         hl.FillTransparency = 0.72
         hl.OutlineTransparency = 0.25
         hl.DepthMode = Enum.HighlightDepthMode.Occluded
-        hl.FillColor = rainbow(AURA.hue)
-        hl.OutlineColor = rainbow(AURA.hue + 0.5)
+        hl.FillColor = auraColor()
+        hl.OutlineColor = auraColor(0.5)
         hl.Parent = char
         table.insert(made, hl)
     end)
@@ -682,7 +748,7 @@ task.spawn(function()
     while true do
         local dt = task.wait()
         if AURA.on then
-            AURA.hue = (AURA.hue + dt * 0.22 * AURA.speed) % 1
+            if AURA.mode == "rainbow" then AURA.hue = (AURA.hue + dt * 0.22 * AURA.speed) % 1 end
             step = step + dt
             local rebuild = step > 0.07
             if rebuild then step = 0 end
@@ -690,16 +756,17 @@ task.spawn(function()
                 if not char.Parent then
                     clearAura(char)
                 else
-                    local c = rainbow(AURA.hue)
+                    local c = auraColor()
                     for _, o in ipairs(s) do
                         if o:IsA("Highlight") then
                             o.FillColor = c
-                            o.OutlineColor = rainbow(AURA.hue + 0.5)
+                            o.OutlineColor = auraColor(0.5)
                         elseif o:IsA("PointLight") then
                             o.Color = c
                         elseif o:IsA("ParticleEmitter") and rebuild then
                             local ph = (o.Name == "VeniceAuraMist") and 0.3 or 0
-                            o.Color = rainbowSeq(AURA.hue + ph)
+                            if o.Name == "VeniceAuraRingIn" then ph = 0.2 end
+                            o.Color = auraSeq(ph)
                         end
                     end
                 end
@@ -1089,9 +1156,140 @@ task.spawn(function()
     end
 end)
 
+-- ============================== скины других игроков ==============================
+
+local skinBusy = false
+local skinCurrent = nil
+local skinLast = "не запускалось"
+local skinLabels = {}
+
+local function setSkinStatus(t)
+    skinLast = t
+    for _, l in ipairs(skinLabels) do
+        if l.Parent then pcall(function() l.Text = "  " .. t end) end
+    end
+end
+
+local function clearAccessories(char)
+    for _, d in ipairs(char:GetChildren()) do
+        if d:IsA("Accessory") or d:IsA("Hat") then pcall(function() d:Destroy() end) end
+    end
+end
+
+local function copyAppearanceFallback(char, uid)
+    local model = Players:GetCharacterAppearanceAsync(uid)
+    if not model then error("нет модели аватара") end
+
+    local bc = model:FindFirstChildOfClass("BodyColors")
+    if bc then
+        local old = char:FindFirstChildOfClass("BodyColors")
+        if old then pcall(function() old:Destroy() end) end
+        pcall(function() bc:Clone().Parent = char end)
+    end
+
+    clearAccessories(char)
+
+    for _, acc in ipairs(model:GetChildren()) do
+        if acc:IsA("Accessory") or acc:IsA("Hat") then
+            local handle = acc:FindFirstChild("Handle")
+            local w = handle and handle:FindFirstChildWhichIsA("Weld")
+            local targetName = w and w.Part1 and w.Part1.Name
+            local target = targetName and char:FindFirstChild(targetName)
+            if target and target:IsA("BasePart") then
+                local clone = acc:Clone()
+                for _, d in ipairs(clone:GetDescendants()) do
+                    if d:IsA("Weld") or d:IsA("Motor6D") then pcall(function() d:Destroy() end) end
+                end
+                local ch = clone:FindFirstChild("Handle")
+                if ch then
+                    ch.Anchored = false
+                    ch.CanCollide = false
+                    pcall(function() ch.Massless = true end)
+                    local att = ch:FindFirstChildWhichIsA("Attachment")
+                    local tatt = att and target:FindFirstChild(att.Name)
+                    if tatt and tatt:IsA("Attachment") then
+                        ch.CFrame = tatt.WorldCFrame * att.CFrame:Inverse()
+                    else
+                        ch.CFrame = target.CFrame
+                    end
+                    local wc = Instance.new("WeldConstraint")
+                    wc.Part0 = ch
+                    wc.Part1 = target
+                    wc.Parent = ch
+                end
+                clone.Parent = char
+            end
+        end
+    end
+end
+
+local function applySkinUserId(uid, quiet)
+    if skinBusy then return false end
+    local char = myChar()
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    if not hum then setSkinStatus("нет персонажа") return false end
+
+    skinBusy = true
+    local ok, err = pcall(function()
+        local desc = Players:GetHumanoidDescriptionFromUserId(uid)
+        if not desc then error("нет описания") end
+        hum:ApplyDescription(desc)
+    end)
+    if not ok then
+        ok, err = pcall(copyAppearanceFallback, char, uid)
+    end
+    skinBusy = false
+
+    if ok then
+        skinCurrent = uid
+        local nm = ""
+        pcall(function() nm = Players:GetNameFromUserIdAsync(uid) end)
+        setSkinStatus("надет скин " .. (nm ~= "" and nm or tostring(uid)))
+        task.defer(enforce)
+        task.delay(0.3, enforce)
+        task.delay(0.9, enforce)
+        task.delay(1.8, enforce)
+        return true
+    end
+    setSkinStatus("ошибка: " .. tostring(err))
+    return false
+end
+
+local function resolveUser(name)
+    name = tostring(name or ""):gsub("^%s+", ""):gsub("%s+$", "")
+    if name == "" then return nil, "пустое имя" end
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p.Name:lower() == name:lower() or p.DisplayName:lower() == name:lower() then
+            return p.UserId, p.Name
+        end
+    end
+    local ok, id = pcall(function() return Players:GetUserIdFromNameAsync(name) end)
+    if ok and id then return id, name end
+    return nil, "игрок не найден"
+end
+
+local function copySkin(name)
+    task.spawn(function()
+        local uid, uname = resolveUser(name)
+        if not uid then
+            setSkinStatus(tostring(uname))
+            return
+        end
+        setSkinStatus("загрузка " .. tostring(uname))
+        applySkinUserId(uid)
+    end)
+end
+
+local function removeSkin()
+    skinCurrent = nil
+    applySkinUserId(LP.UserId)
+    setSkinStatus("свой скин")
+end
+
 -- ============================== фиксация ==============================
 
 local function enforce()
+    if not partsFolder or not partsFolder.Parent then pcall(getFolder) end
     local list = targets()
     if #list == 0 then return end
 
@@ -1100,9 +1298,8 @@ local function enforce()
         if CONFIG.korblox then
             if not korbloxOk(char) then
                 local hum = char:FindFirstChildOfClass("Humanoid")
-                if hum and hum.RigType == Enum.HumanoidRigType.R6 and not char:FindFirstChild("VeniceKorblox") then
-                    cmMisses = cmMisses + 1
-                    if cmMisses >= 4 then weldMode = true end
+                if hum and hum.RigType == Enum.HumanoidRigType.R6 and charMode[char] == "weld" then
+                    weldMode = true
                 end
             end
             pcall(applyKorblox, char, true)
@@ -1145,15 +1342,32 @@ if not BOUND then
     end))
 end
 
+-- ============================== слежение за персонажем ==============================
+
+local watched = setmetatable({}, { __mode = "k" })
+
 local function watchChar(char)
+    if not char then return end
+    if watched[char] then return end
+    watched[char] = true
+
     meshCache = nil
-    cmMisses = 0
+    cmTries[char] = nil
+    charMode[char] = nil
     airJumps = 0
     accAt = 0
+    skinBusy = false
+
     enforce()
-    task.delay(0.25, enforce)
-    task.delay(0.8, enforce)
-    task.delay(1.6, enforce)
+    for _, d in ipairs({ 0.2, 0.5, 0.9, 1.4, 2.2, 3.2 }) do
+        task.delay(d, enforce)
+    end
+
+    if skinCurrent then
+        task.delay(0.6, function()
+            if skinCurrent then pcall(applySkinUserId, skinCurrent, true) end
+        end)
+    end
 
     track(char.DescendantAdded:Connect(function(d)
         if d:IsA("BasePart") or d:IsA("Accessory") or d:IsA("Hat") or d:IsA("Decal") or d:IsA("CharacterMesh") then
@@ -1161,12 +1375,36 @@ local function watchChar(char)
             task.defer(enforce)
         end
     end))
+
+    -- движок подкинул свой меш правой ноги — перетираем и ставим свой
+    track(char.ChildAdded:Connect(function(d)
+        if not CONFIG.korblox then return end
+        if d:IsA("CharacterMesh") and d.BodyPart == Enum.BodyPart.RightLeg and d.Name ~= "VeniceKorblox" then
+            pcall(function() d:Destroy() end)
+            task.defer(enforce)
+        end
+    end))
+
+    -- меш снесли (респавн аватарки, ApplyDescription) — возвращаем
+    track(char.ChildRemoved:Connect(function(d)
+        if not CONFIG.korblox then return end
+        if d.Name == "VeniceKorblox" then
+            task.defer(enforce)
+        elseif d:IsA("CharacterMesh") and d.BodyPart == Enum.BodyPart.RightLeg then
+            task.defer(enforce)
+        end
+    end))
+
     track(char.AncestryChanged:Connect(function() task.defer(enforce) end))
 
     local hum = char:FindFirstChildOfClass("Humanoid")
     if hum then
         track(hum.ChildAdded:Connect(function() task.defer(enforce) end))
         track(hum:GetPropertyChangedSignal("RigType"):Connect(function() task.defer(enforce) end))
+        track(hum.Died:Connect(function()
+            -- после смерти всё равно дожимаем, пока не придёт новый персонаж
+            for _, d in ipairs({ 0.2, 0.6, 1.2 }) do task.delay(d, enforce) end
+        end))
     end
 end
 
@@ -1174,14 +1412,20 @@ if LP.Character then watchChar(LP.Character) end
 track(LP.CharacterAdded:Connect(watchChar))
 track(LP.CharacterAppearanceLoaded:Connect(enforce))
 
-local watched = setmetatable({}, { __mode = "k" })
+-- watchdog: ловим смену персонажа даже если CharacterAdded не дошёл
+local lastChar = LP.Character
 task.spawn(function()
     while true do
-        task.wait(0.5)
+        task.wait(0.4)
         local c = myChar()
-        if c and not watched[c] then
-            watched[c] = true
+        if c and not watched[c] then watchChar(c) end
+        if c and c ~= lastChar then
+            lastChar = c
             watchChar(c)
+        end
+        if LP.Character and LP.Character ~= lastChar then
+            lastChar = LP.Character
+            watchChar(LP.Character)
         end
     end
 end)
@@ -1305,6 +1549,88 @@ local function button(text, cb, highlight)
     return l
 end
 
+local function chip(parent, text, cb, color)
+    local b = Instance.new("TextButton")
+    b.BackgroundColor3 = ROW
+    b.BorderSizePixel = 0
+    b.AutoButtonColor = false
+    b.Font = Enum.Font.GothamBold
+    b.TextSize = 9
+    b.TextColor3 = TEXT
+    b.Text = text
+    b.Parent = parent
+    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 6)
+    if color then
+        local dot = Instance.new("Frame")
+        dot.Size = UDim2.fromOffset(8, 8)
+        dot.Position = UDim2.new(0, 5, 0.5, -4)
+        dot.BackgroundColor3 = color
+        dot.BorderSizePixel = 0
+        dot.Parent = b
+        Instance.new("UICorner", dot).CornerRadius = UDim.new(1, 0)
+        b.TextXAlignment = Enum.TextXAlignment.Center
+        b.Text = "    " .. text
+    end
+    b.MouseButton1Click:Connect(function()
+        tw(b, 0.1, { BackgroundColor3 = ACCENT })
+        task.delay(0.2, function() tw(b, 0.2, { BackgroundColor3 = ROW }) end)
+        task.spawn(function() pcall(cb) end)
+    end)
+    return b
+end
+
+local function gridBox(rows)
+    local f = Instance.new("Frame")
+    f.Size = UDim2.new(1, -8, 0, rows * 30)
+    f.BackgroundTransparency = 1
+    f.Parent = panel
+    local g = Instance.new("UIGridLayout", f)
+    g.CellSize = UDim2.new(0.25, -4, 0, 26)
+    g.CellPadding = UDim2.new(0, 4, 0, 4)
+    return f
+end
+
+local function textbox(placeholder, cb)
+    local r = Instance.new("Frame")
+    r.Size = UDim2.new(1, -8, 0, 30)
+    r.BackgroundColor3 = ROW
+    r.BorderSizePixel = 0
+    r.Parent = panel
+    Instance.new("UICorner", r).CornerRadius = UDim.new(0, 8)
+
+    local t = Instance.new("TextBox")
+    t.Size = UDim2.new(1, -16, 1, 0)
+    t.Position = UDim2.fromOffset(8, 0)
+    t.BackgroundTransparency = 1
+    t.Font = Enum.Font.GothamSemibold
+    t.TextSize = 12
+    t.TextColor3 = TEXT
+    t.PlaceholderText = placeholder
+    t.PlaceholderColor3 = SUB
+    t.TextXAlignment = Enum.TextXAlignment.Left
+    t.ClearTextOnFocus = false
+    t.Text = ""
+    t.Parent = r
+    t.FocusLost:Connect(function(enter)
+        if enter then task.spawn(function() pcall(cb, t.Text) end) end
+    end)
+    return t
+end
+
+local function statusLine()
+    local l = Instance.new("TextLabel")
+    l.Size = UDim2.new(1, -8, 0, 14)
+    l.BackgroundTransparency = 1
+    l.Font = Enum.Font.GothamMedium
+    l.TextSize = 10
+    l.TextColor3 = SUB
+    l.TextXAlignment = Enum.TextXAlignment.Left
+    l.Text = "  " .. skinLast
+    l.Parent = panel
+    table.insert(skinLabels, l)
+    return l
+end
+
 local function slider(text, min, max, default, cb, step, fmt)
     local r = Instance.new("Frame")
     r.Size = UDim2.new(1, -8, 0, 40)
@@ -1424,7 +1750,7 @@ local function build()
 
     local shell = Instance.new("Frame")
     shell.Position = UDim2.fromOffset(20, 70)
-    shell.Size = UDim2.fromOffset(480, 316)
+    shell.Size = UDim2.fromOffset(480, 330)
     shell.BackgroundColor3 = BG
     shell.BackgroundTransparency = 0.05
     shell.BorderSizePixel = 0
@@ -1517,8 +1843,29 @@ local function build()
     end, 26)
 
     panel = pages.aura
-    section("АУРА")
-    setAura = row("Радужная аура", AURA.on, function(v)
+    section("ЦВЕТ")
+    local cg = gridBox(4)
+    for _, c in ipairs(AURA_COLORS) do
+        chip(cg, c.name, function()
+            if c.mode == "rainbow" then
+                AURA.mode = "rainbow"
+            else
+                AURA.mode = "solid"
+                AURA.color = c.color
+            end
+            if AURA.on then refreshAura() end
+        end, c.color)
+    end
+    section("СТИЛЬ")
+    local sg = gridBox(1)
+    for _, s in ipairs(AURA_STYLES) do
+        chip(sg, s.name, function()
+            AURA.style = s.id
+            if AURA.on then refreshAura() end
+        end)
+    end
+    section("ПАРАМЕТРЫ")
+    setAura = row("Аура вкл", AURA.on, function(v)
         AURA.on = v
         if v then
             for _, c in ipairs(targets()) do pcall(applyAura, c, true) end
@@ -1538,6 +1885,12 @@ local function build()
     end)
 
     panel = pages.head
+    section("СКИН ИГРОКА")
+    local skinBox = textbox("ник игрока → Enter", function(t) copySkin(t) end)
+    button("Применить скин по нику", function() copySkin(skinBox.Text) end, true)
+    button("Мой скин обратно", function() removeSkin() end)
+    statusLine()
+
     section("АКСЕССУАРЫ")
     for _, a in ipairs(ACCS) do
         button(a.name, function() setAcc(a.id) end)
@@ -1657,10 +2010,11 @@ local function build()
         local char = list[1]
         local hum = char and char:FindFirstChildOfClass("Humanoid")
         print("[Venice] риг:", hum and hum.RigType.Name or "нет")
-        print("[Venice] weld-режим:", tostring(weldMode))
+        print("[Venice] weld-режим:", tostring(weldMode), "попыток меша:", char and tostring(cmTries[char]) or "-")
         print("[Venice] CreateMeshPartAsync:", meshCache and "ок" or "недоступен")
-        print("[Venice] аура:", tostring(AURA.on), "размер:", AURA.size, "скорость:", AURA.speed, "объектов:", auraState[char or LP.Character] and #auraState[char or LP.Character] or 0)
+        print("[Venice] аура:", tostring(AURA.on), "режим:", AURA.mode, "стиль:", AURA.style, "объектов:", auraState[char or LP.Character] and #auraState[char or LP.Character] or 0)
         print("[Venice] аксессуар:", accCurrent, "| на голове:", tostring(hasAcc()), "| статус:", accLast)
+        print("[Venice] скин:", tostring(skinCurrent), "|", skinLast)
         print("[Venice] частей в папке:", partsFolder and #partsFolder:GetChildren() or 0)
         print("[Venice] инф.прыжок:", tostring(CONFIG.infJump), "лимит:", CONFIG.jumpLimit)
         print("[Venice] fps:", tostring(FPS.boost), "частиц убито:", #killedParts, "эффектов:", #killedFx)
@@ -1671,6 +2025,7 @@ local function build()
         CONFIG.infJump = false
         AURA.on = false
         accCurrent = 0
+        skinCurrent = nil
         FPS.boost, FPS.shadowsOff, FPS.fxOff, FPS.partsOff = false, false, false, false
         if setHeadless then setHeadless(false) end
         if setKorblox then setKorblox(false) end
@@ -1720,7 +2075,7 @@ local function build()
         end
     end)
 
-    print("[Venice] v32 · Z меню")
+    print("[Venice] v33 · Z меню")
 end
 
 build()
