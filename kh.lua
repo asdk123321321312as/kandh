@@ -12,6 +12,7 @@ local Lighting = ref(game:GetService("Lighting"))
 local AssetS   = ref(game:GetService("AssetService"))
 local RunS     = ref(game:GetService("RunService"))
 local CAS      = ref(game:GetService("ContextActionService"))
+local Physics  = ref(game:GetService("PhysicsService"))
 local WS       = ref(workspace)
 local LP       = Players.LocalPlayer
 while not LP do task.wait() end
@@ -21,7 +22,7 @@ local function track(c) table.insert(getgenv().VeniceCosConns, c) return c end
 local CONFIG = {
     korblox = true, headless = true, force = true,
     infJump = false, jumpLimit = -1,
-    speedHack = false, walkSpeed = 60, noclip = false,
+    speedHack = false, walkSpeed = 60, speedBoost = true, noclip = false,
 }
 local FPS = { boost = false, shadowsOff = false, fxOff = false, partsOff = false, cap = 240 }
 local AURA = { on = false, size = 1, speed = 1, hue = 0, mode = "rainbow", color = Color3.fromRGB(152, 132, 255), style = "both" }
@@ -567,19 +568,48 @@ end
 local WS_ATTR  = "VeniceOrigSpeed"
 local COL_ATTR = "VeniceOrigCol"
 local speedWriting = false
+local groupOk = false
+local GROUP = "VeniceNoClip"
+
+local function ensureGroup()
+    if groupOk then return true end
+    local ok = pcall(function()
+        if not Physics:IsCollisionGroupRegistered(GROUP) then
+            Physics:RegisterCollisionGroup(GROUP)
+        end
+        Physics:CollisionGroupSetCollidable(GROUP, "Default", false)
+    end)
+    groupOk = ok
+    return ok
+end
 
 local function applySpeed(char)
     if not CONFIG.speedHack then return end
     local hum = char and char:FindFirstChildOfClass("Humanoid")
     if not hum or hum.Health <= 0 then return end
     if speedWriting then return end
-    if math.abs(hum.WalkSpeed - CONFIG.walkSpeed) > 0.05 then
+    speedWriting = true
+    if hum.WalkSpeed ~= CONFIG.walkSpeed then
         if hum:GetAttribute(WS_ATTR) == nil then
             pcall(function() hum:SetAttribute(WS_ATTR, hum.WalkSpeed) end)
         end
-        speedWriting = true
         pcall(function() hum.WalkSpeed = CONFIG.walkSpeed end)
-        speedWriting = false
+    end
+    speedWriting = false
+end
+
+local function boostVelocity(char)
+    if not CONFIG.speedHack or not CONFIG.speedBoost then return end
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    local root = hum and hum.RootPart
+    if not root or hum.Health <= 0 then return end
+    local dir = hum.MoveDirection
+    if dir.Magnitude < 0.05 then return end
+    local v = root.AssemblyLinearVelocity
+    local want = dir.Unit * CONFIG.walkSpeed
+    local cur = Vector3.new(v.X, 0, v.Z)
+    if cur.Magnitude < want.Magnitude then
+        root.AssemblyLinearVelocity = Vector3.new(want.X, v.Y, want.Z)
     end
 end
 
@@ -597,6 +627,7 @@ end
 
 local function setNoClip(char, on)
     if not char then return end
+    if on then ensureGroup() end
     for _, d in ipairs(char:GetDescendants()) do
         if d:IsA("BasePart") then
             if on then
@@ -604,16 +635,40 @@ local function setNoClip(char, on)
                     pcall(function() d:SetAttribute(COL_ATTR, d.CanCollide) end)
                 end
                 if d.CanCollide then pcall(function() d.CanCollide = false end) end
+                if groupOk and d.CollisionGroup ~= GROUP then
+                    pcall(function() d.CollisionGroup = GROUP end)
+                end
             else
                 local o = d:GetAttribute(COL_ATTR)
                 if o ~= nil then
                     pcall(function() d.CanCollide = o end)
                     pcall(function() d:SetAttribute(COL_ATTR, nil) end)
                 end
+                if d.CollisionGroup == GROUP then
+                    pcall(function() d.CollisionGroup = "Default" end)
+                end
             end
         end
     end
 end
+
+-- два тика: до физики и после — игру перекрывает в обоих случаях
+track(RunS.Stepped:Connect(function()
+    local char = LP.Character
+    if not char then return end
+    if CONFIG.speedHack then
+        pcall(applySpeed, char)
+        pcall(boostVelocity, char)
+    end
+    if CONFIG.noclip then pcall(setNoClip, char, true) end
+end))
+
+track(RunS.RenderStepped:Connect(function()
+    local char = LP.Character
+    if not char then return end
+    if CONFIG.speedHack then pcall(applySpeed, char) end
+    if CONFIG.noclip then pcall(setNoClip, char, true) end
+end))
 
 -- ============================== аура ==============================
 
@@ -1364,7 +1419,7 @@ local function enforce()
         if AURA.on then pcall(applyAura, char, true) end
     end
 
-    local mine = myChar()
+    local mine = LP.Character or myChar()
     if mine then
         if CONFIG.speedHack then pcall(applySpeed, mine) end
         if CONFIG.noclip then pcall(setNoClip, mine, true) end
@@ -1434,7 +1489,16 @@ local function watchChar(char)
 
     track(char.DescendantAdded:Connect(function(d)
         if d:IsA("BasePart") or d:IsA("Accessory") or d:IsA("Hat") or d:IsA("Decal") or d:IsA("CharacterMesh") then
-            if d:IsA("BasePart") then hookPart(d) end
+            if d:IsA("BasePart") then
+                hookPart(d)
+                if CONFIG.noclip then
+                    if d:GetAttribute(COL_ATTR) == nil then
+                        pcall(function() d:SetAttribute(COL_ATTR, d.CanCollide) end)
+                    end
+                    pcall(function() d.CanCollide = false end)
+                    if groupOk then pcall(function() d.CollisionGroup = GROUP end) end
+                end
+            end
             task.defer(enforce)
         end
     end))
@@ -1464,7 +1528,7 @@ local function watchChar(char)
         track(hum:GetPropertyChangedSignal("RigType"):Connect(function() task.defer(enforce) end))
         track(hum:GetPropertyChangedSignal("WalkSpeed"):Connect(function()
             if speedWriting or not CONFIG.speedHack then return end
-            if math.abs(hum.WalkSpeed - CONFIG.walkSpeed) > 0.05 then
+            if hum.WalkSpeed ~= CONFIG.walkSpeed then
                 task.defer(function() pcall(applySpeed, char) end)
             end
         end))
@@ -1781,7 +1845,7 @@ local function setOpen(force)
     end
 end
 
-local setHeadless, setKorblox, setForce, setBoost, setInf, setAura, setSpeed, setNoClip
+local setHeadless, setKorblox, setForce, setBoost, setInf, setAura, setSpeed, setNoClip, setBoostVel
 
 local function setTab(id)
     activeTab = id
@@ -1976,7 +2040,7 @@ local function build()
     section("СКОРОСТЬ")
     setSpeed = row("Спидхак", CONFIG.speedHack, function(v)
         CONFIG.speedHack = v
-        local mine = myChar()
+        local mine = LP.Character
         if v then
             pcall(applySpeed, mine)
         else
@@ -1985,12 +2049,15 @@ local function build()
     end)
     slider("Скорость", 8, 400, CONFIG.walkSpeed, function(v)
         CONFIG.walkSpeed = v
-        if CONFIG.speedHack then pcall(applySpeed, myChar()) end
+        if CONFIG.speedHack then pcall(applySpeed, LP.Character) end
     end, 1)
+    setBoostVel = row("Пробивать клэмпы (velocity)", CONFIG.speedBoost, function(v)
+        CONFIG.speedBoost = v
+    end, 26)
     section("КОЛЛИЗИИ")
     setNoClip = row("Ноклип", CONFIG.noclip, function(v)
         CONFIG.noclip = v
-        pcall(setNoClip, myChar(), v)
+        pcall(setNoClip, LP.Character, v)
     end)
     section("ПРЫЖОК")
     setInf = row("Бесконечный прыжок", CONFIG.infJump, function(v)
@@ -2090,7 +2157,6 @@ local function build()
         local list = targets()
         print("[Venice] целей найдено:", #list)
         print("[Venice] LP.Character:", tostring(LP.Character))
-        print("[Venice] myChar:", tostring(myChar()))
         local char = list[1]
         local hum = char and char:FindFirstChildOfClass("Humanoid")
         print("[Venice] риг:", hum and hum.RigType.Name or "нет")
@@ -2099,10 +2165,9 @@ local function build()
         print("[Venice] аура:", tostring(AURA.on), "режим:", AURA.mode, "стиль:", AURA.style)
         print("[Venice] аксессуар:", accCurrent, "| на голове:", tostring(hasAcc()), "| статус:", accLast)
         print("[Venice] скин:", tostring(skinCurrent), "|", skinLast)
-        print("[Venice] спидхак:", tostring(CONFIG.speedHack), "скорость:", CONFIG.walkSpeed, "факт:", hum and hum.WalkSpeed or "-")
-        print("[Venice] ноклип:", tostring(CONFIG.noclip))
+        print("[Venice] спидхак:", tostring(CONFIG.speedHack), "скорость:", CONFIG.walkSpeed, "velocity:", tostring(CONFIG.speedBoost), "факт WS:", hum and hum.WalkSpeed or "-")
+        print("[Venice] ноклип:", tostring(CONFIG.noclip), "группа:", tostring(groupOk))
         print("[Venice] частей в папке:", partsFolder and #partsFolder:GetChildren() or 0)
-        print("[Venice] инф.прыжок:", tostring(CONFIG.infJump), "лимит:", CONFIG.jumpLimit)
         print("[Venice] fps:", tostring(FPS.boost), "частиц убито:", #killedParts, "эффектов:", #killedFx)
         print("[Venice] FOV:", tostring(fovTarget), "небо:", SKY.mode)
     end)
@@ -2167,7 +2232,7 @@ local function build()
         end
     end)
 
-    print("[Venice] v34 · Z меню")
+    print("[Venice] v35 · Z меню")
 end
 
 build()
