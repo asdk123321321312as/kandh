@@ -18,7 +18,11 @@ while not LP do task.wait() end
 
 local function track(c) table.insert(getgenv().VeniceCosConns, c) return c end
 
-local CONFIG = { korblox = true, headless = true, force = true, infJump = false, jumpLimit = -1 }
+local CONFIG = {
+    korblox = true, headless = true, force = true,
+    infJump = false, jumpLimit = -1,
+    speedHack = false, walkSpeed = 60, noclip = false,
+}
 local FPS = { boost = false, shadowsOff = false, fxOff = false, partsOff = false, cap = 240 }
 local AURA = { on = false, size = 1, speed = 1, hue = 0, mode = "rainbow", color = Color3.fromRGB(152, 132, 255), style = "both" }
 
@@ -556,6 +560,59 @@ local function cleanupParts(list)
         if not alive then pcall(function() p:Destroy() end) end
     end
     if meshCache and not meshCache.Parent then meshCache = nil end
+end
+
+-- ============================== спидхак / ноклип ==============================
+
+local WS_ATTR  = "VeniceOrigSpeed"
+local COL_ATTR = "VeniceOrigCol"
+local speedWriting = false
+
+local function applySpeed(char)
+    if not CONFIG.speedHack then return end
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    if not hum or hum.Health <= 0 then return end
+    if speedWriting then return end
+    if math.abs(hum.WalkSpeed - CONFIG.walkSpeed) > 0.05 then
+        if hum:GetAttribute(WS_ATTR) == nil then
+            pcall(function() hum:SetAttribute(WS_ATTR, hum.WalkSpeed) end)
+        end
+        speedWriting = true
+        pcall(function() hum.WalkSpeed = CONFIG.walkSpeed end)
+        speedWriting = false
+    end
+end
+
+local function restoreSpeed(char)
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    if not hum then return end
+    local o = hum:GetAttribute(WS_ATTR)
+    if o ~= nil then
+        speedWriting = true
+        pcall(function() hum.WalkSpeed = o end)
+        speedWriting = false
+        pcall(function() hum:SetAttribute(WS_ATTR, nil) end)
+    end
+end
+
+local function setNoClip(char, on)
+    if not char then return end
+    for _, d in ipairs(char:GetDescendants()) do
+        if d:IsA("BasePart") then
+            if on then
+                if d:GetAttribute(COL_ATTR) == nil then
+                    pcall(function() d:SetAttribute(COL_ATTR, d.CanCollide) end)
+                end
+                if d.CanCollide then pcall(function() d.CanCollide = false end) end
+            else
+                local o = d:GetAttribute(COL_ATTR)
+                if o ~= nil then
+                    pcall(function() d.CanCollide = o end)
+                    pcall(function() d:SetAttribute(COL_ATTR, nil) end)
+                end
+            end
+        end
+    end
 end
 
 -- ============================== аура ==============================
@@ -1307,6 +1364,12 @@ local function enforce()
         if AURA.on then pcall(applyAura, char, true) end
     end
 
+    local mine = myChar()
+    if mine then
+        if CONFIG.speedHack then pcall(applySpeed, mine) end
+        if CONFIG.noclip then pcall(setNoClip, mine, true) end
+    end
+
     pcall(cleanupParts, list)
 
     if accCurrent ~= 0 and not accBusy and not hasAcc() and os.clock() - accAt > 0.4 then
@@ -1376,7 +1439,6 @@ local function watchChar(char)
         end
     end))
 
-    -- движок подкинул свой меш правой ноги — перетираем и ставим свой
     track(char.ChildAdded:Connect(function(d)
         if not CONFIG.korblox then return end
         if d:IsA("CharacterMesh") and d.BodyPart == Enum.BodyPart.RightLeg and d.Name ~= "VeniceKorblox" then
@@ -1385,7 +1447,6 @@ local function watchChar(char)
         end
     end))
 
-    -- меш снесли (респавн аватарки, ApplyDescription) — возвращаем
     track(char.ChildRemoved:Connect(function(d)
         if not CONFIG.korblox then return end
         if d.Name == "VeniceKorblox" then
@@ -1401,8 +1462,13 @@ local function watchChar(char)
     if hum then
         track(hum.ChildAdded:Connect(function() task.defer(enforce) end))
         track(hum:GetPropertyChangedSignal("RigType"):Connect(function() task.defer(enforce) end))
+        track(hum:GetPropertyChangedSignal("WalkSpeed"):Connect(function()
+            if speedWriting or not CONFIG.speedHack then return end
+            if math.abs(hum.WalkSpeed - CONFIG.walkSpeed) > 0.05 then
+                task.defer(function() pcall(applySpeed, char) end)
+            end
+        end))
         track(hum.Died:Connect(function()
-            -- после смерти всё равно дожимаем, пока не придёт новый персонаж
             for _, d in ipairs({ 0.2, 0.6, 1.2 }) do task.delay(d, enforce) end
         end))
     end
@@ -1412,7 +1478,6 @@ if LP.Character then watchChar(LP.Character) end
 track(LP.CharacterAdded:Connect(watchChar))
 track(LP.CharacterAppearanceLoaded:Connect(enforce))
 
--- watchdog: ловим смену персонажа даже если CharacterAdded не дошёл
 local lastChar = LP.Character
 task.spawn(function()
     while true do
@@ -1716,7 +1781,7 @@ local function setOpen(force)
     end
 end
 
-local setHeadless, setKorblox, setForce, setBoost, setInf, setAura
+local setHeadless, setKorblox, setForce, setBoost, setInf, setAura, setSpeed, setNoClip
 
 local function setTab(id)
     activeTab = id
@@ -1908,7 +1973,26 @@ local function build()
     end)
 
     panel = pages.move
-    section("ДВИЖЕНИЕ")
+    section("СКОРОСТЬ")
+    setSpeed = row("Спидхак", CONFIG.speedHack, function(v)
+        CONFIG.speedHack = v
+        local mine = myChar()
+        if v then
+            pcall(applySpeed, mine)
+        else
+            pcall(restoreSpeed, mine)
+        end
+    end)
+    slider("Скорость", 8, 400, CONFIG.walkSpeed, function(v)
+        CONFIG.walkSpeed = v
+        if CONFIG.speedHack then pcall(applySpeed, myChar()) end
+    end, 1)
+    section("КОЛЛИЗИИ")
+    setNoClip = row("Ноклип", CONFIG.noclip, function(v)
+        CONFIG.noclip = v
+        pcall(setNoClip, myChar(), v)
+    end)
+    section("ПРЫЖОК")
     setInf = row("Бесконечный прыжок", CONFIG.infJump, function(v)
         CONFIG.infJump = v
         airJumps = 0
@@ -2012,9 +2096,11 @@ local function build()
         print("[Venice] риг:", hum and hum.RigType.Name or "нет")
         print("[Venice] weld-режим:", tostring(weldMode), "попыток меша:", char and tostring(cmTries[char]) or "-")
         print("[Venice] CreateMeshPartAsync:", meshCache and "ок" or "недоступен")
-        print("[Venice] аура:", tostring(AURA.on), "режим:", AURA.mode, "стиль:", AURA.style, "объектов:", auraState[char or LP.Character] and #auraState[char or LP.Character] or 0)
+        print("[Venice] аура:", tostring(AURA.on), "режим:", AURA.mode, "стиль:", AURA.style)
         print("[Venice] аксессуар:", accCurrent, "| на голове:", tostring(hasAcc()), "| статус:", accLast)
         print("[Venice] скин:", tostring(skinCurrent), "|", skinLast)
+        print("[Venice] спидхак:", tostring(CONFIG.speedHack), "скорость:", CONFIG.walkSpeed, "факт:", hum and hum.WalkSpeed or "-")
+        print("[Venice] ноклип:", tostring(CONFIG.noclip))
         print("[Venice] частей в папке:", partsFolder and #partsFolder:GetChildren() or 0)
         print("[Venice] инф.прыжок:", tostring(CONFIG.infJump), "лимит:", CONFIG.jumpLimit)
         print("[Venice] fps:", tostring(FPS.boost), "частиц убито:", #killedParts, "эффектов:", #killedFx)
@@ -2023,6 +2109,8 @@ local function build()
     button("Убрать всё", function()
         CONFIG.headless, CONFIG.korblox, CONFIG.force = false, false, false
         CONFIG.infJump = false
+        CONFIG.speedHack = false
+        CONFIG.noclip = false
         AURA.on = false
         accCurrent = 0
         skinCurrent = nil
@@ -2033,11 +2121,15 @@ local function build()
         if setBoost then setBoost(false) end
         if setInf then setInf(false) end
         if setAura then setAura(false) end
+        if setSpeed then setSpeed(false) end
+        if setNoClip then setNoClip(false) end
         syncFps()
         for _, c in ipairs(targets()) do
             pcall(applyHeadless, c, false)
             pcall(clearKorblox, c)
             pcall(clearAura, c)
+            pcall(setNoClip, c, false)
+            pcall(restoreSpeed, c)
         end
         pcall(clearAcc)
         pcall(applySky, "off")
@@ -2075,7 +2167,7 @@ local function build()
         end
     end)
 
-    print("[Venice] v33 · Z меню")
+    print("[Venice] v34 · Z меню")
 end
 
 build()
