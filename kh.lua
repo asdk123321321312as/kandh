@@ -2,7 +2,7 @@ if getgenv().VeniceCos then pcall(function() getgenv().VeniceCos:Destroy() end) 
 if getgenv().VeniceCosConns then
     for _, c in ipairs(getgenv().VeniceCosConns) do pcall(function() c:Disconnect() end) end
 end
-getgenv().VeniceCosConns = {} -- пизда
+getgenv().VeniceCosConns = {}
 
 local ref = cloneref or function(s) return s end
 local Players  = ref(game:GetService("Players"))
@@ -30,6 +30,10 @@ local FPS = { boost = false, shadowsOff = false, fxOff = false, partsOff = false
 local AURA = { on = false, size = 1, speed = 1, hue = 0, mode = "rainbow", color = Color3.fromRGB(152, 132, 255), style = "both" }
 local WALL = { on = false, speed = 35, reach = 3.5, key = Enum.KeyCode.H, attached = false }
 local PROTECT = { parts = true, godHealth = true }
+local BHOP = {
+    on = false, autoJump = true, accel = 90, groundAccel = 12,
+    airWish = 32, maxSpeed = 400, key = Enum.KeyCode.B, lastJump = 0,
+}
 
 local ACCS = {
     { id = 132809431,  name = "Doomsekkar" },
@@ -629,7 +633,7 @@ local function releaseMotor()
 end
 
 local function dropMotor()
-    if CONFIG.speedHack then return end
+    if CONFIG.speedHack or BHOP.on then return end
     releaseMotor()
 end
 
@@ -1004,7 +1008,7 @@ pcall(function()
             speedCur = 0
         end
         if WALL.on then pcall(wallStick, char) end
-        if not CONFIG.speedHack and not WALL.attached and motor then releaseMotor() end
+        if not CONFIG.speedHack and not WALL.attached and not BHOP.on and motor then releaseMotor() end
         if CONFIG.noclip then pcall(setNoClip, char, true) end
     end)
     moveBound = true
@@ -1349,6 +1353,68 @@ track(RunS.Stepped:Connect(function()
         airJumps = 0
         if CONFIG.jumpLimit == 0 and holdingJump() then pcall(infJump, true) end
     end
+end))
+
+-- ============================== бхоп / стрейф-ускорение ==============================
+
+local function bhopStep(char, dt)
+    if not BHOP.on then return end
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    local root = hum and hum.RootPart
+    if not root or hum.Health <= 0 or hum.SeatPart then return end
+    if WALL.attached then return end
+
+    local grounded = hum.FloorMaterial ~= Enum.Material.Air
+
+    if grounded and BHOP.autoJump and holdingJump() then
+        local now = os.clock()
+        if now - BHOP.lastJump > 0.08 and now - lastJump > 0.08 then
+            BHOP.lastJump = now
+            local v0 = root.AssemblyLinearVelocity
+            pcall(function() hum:ChangeState(Enum.HumanoidStateType.Jumping) end)
+            local jp = hum.JumpPower
+            if not hum.UseJumpPower then jp = math.sqrt(2 * WS.Gravity * hum.JumpHeight) end
+            root.AssemblyLinearVelocity = Vector3.new(v0.X, jp or 50, v0.Z)
+            grounded = false
+        end
+    end
+
+    local wish = inputDir()
+    local v = root.AssemblyLinearVelocity
+    local cur = Vector3.new(v.X, 0, v.Z)
+
+    if wish.Magnitude < 0.05 then
+        if not grounded then
+            driveMotor(root, Vector3.new(cur.X, 0, cur.Z), false)
+        elseif motor and not CONFIG.speedHack then
+            releaseMotor()
+        end
+        return
+    end
+
+    local accel = grounded and BHOP.groundAccel or BHOP.accel
+    local wishSpeed = grounded and math.max(cur.Magnitude, BHOP.airWish) or BHOP.airWish
+
+    local add = wishSpeed - cur:Dot(wish)
+    if add > 0 then
+        local step = accel * dt * wishSpeed
+        if step > add then step = add end
+        cur = cur + wish * step
+    end
+
+    if cur.Magnitude > BHOP.maxSpeed then
+        cur = cur.Unit * BHOP.maxSpeed
+    end
+
+    root.AssemblyLinearVelocity = Vector3.new(cur.X, v.Y, cur.Z)
+    driveMotor(root, Vector3.new(cur.X, 0, cur.Z), false)
+end
+
+track(RunS.Stepped:Connect(function(dt)
+    if not BHOP.on then return end
+    local char = LP.Character
+    if not char then return end
+    pcall(bhopStep, char, dt)
 end))
 
 -- ============================== небо ==============================
@@ -1826,8 +1892,8 @@ end))
 
 local gui, panel, open = nil, nil, false
 local pages, tabBtns, activeTab = {}, {}, nil
-local setHeadless, setKorblox, setForce, setBoost, setInf, setAura, setSpeed, setNoClip, setBoostVel, setWall
-local toggleSpeed, toggleWall
+local setHeadless, setKorblox, setForce, setBoost, setInf, setAura, setSpeed, setNoClip, setBoostVel, setWall, setBhop
+local toggleSpeed, toggleWall, toggleBhop
 
 local function tw(o, t, p) TweenS:Create(o, TweenInfo.new(t), p):Play() end
 
@@ -2293,7 +2359,57 @@ local function build()
         enforce()
     end)
 
-    panel = pages.move
+    -- ===== движение с под-вкладками =====
+    local movePage = pages.move
+    local subBar = Instance.new("Frame")
+    subBar.Size = UDim2.new(1, -8, 0, 22)
+    subBar.BackgroundTransparency = 1
+    subBar.Parent = movePage
+    local sb = Instance.new("UIListLayout", subBar)
+    sb.FillDirection = Enum.FillDirection.Horizontal
+    sb.Padding = UDim.new(0, 3)
+
+    local subPages, subBtns = {}, {}
+    local function showSub(id)
+        for k, f in pairs(subPages) do f.Visible = (k == id) end
+        for k, b in pairs(subBtns) do
+            b.BackgroundColor3 = (k == id) and ACCENT or ROW
+            b.TextColor3 = (k == id) and BG or SUB
+        end
+    end
+    local SUBS = {
+        { id = "spd",  label = "Скорость" },
+        { id = "jmp",  label = "Прыжок" },
+        { id = "wall", label = "Стена" },
+    }
+    for _, s in ipairs(SUBS) do
+        local b = Instance.new("TextButton")
+        b.Size = UDim2.fromOffset(72, 20)
+        b.BackgroundColor3 = ROW
+        b.BorderSizePixel = 0
+        b.AutoButtonColor = false
+        b.Font = Enum.Font.GothamBold
+        b.TextSize = 9
+        b.TextColor3 = SUB
+        b.Text = s.label
+        b.Parent = subBar
+        Instance.new("UICorner", b).CornerRadius = UDim.new(0, 6)
+        subBtns[s.id] = b
+        b.MouseButton1Click:Connect(function() showSub(s.id) end)
+
+        local f = Instance.new("Frame")
+        f.Size = UDim2.new(1, -8, 0, 0)
+        f.AutomaticSize = Enum.AutomaticSize.Y
+        f.BackgroundTransparency = 1
+        f.Visible = false
+        f.Parent = movePage
+        local fl = Instance.new("UIListLayout", f)
+        fl.Padding = UDim.new(0, 5)
+        subPages[s.id] = f
+    end
+    showSub("spd")
+
+    panel = subPages.spd
     section("СКОРОСТЬ")
     setSpeed = row("Спидхак", CONFIG.speedHack, function(v)
         CONFIG.speedHack = v
@@ -2323,12 +2439,46 @@ local function build()
     setBoostVel = row("Пробивать клэмпы (velocity)", CONFIG.speedBoost, function(v)
         CONFIG.speedBoost = v
     end, 26)
-    section("КОЛЛИЗИИ")
-    setNoClip = row("Ноклип", CONFIG.noclip, function(v)
-        CONFIG.noclip = v
-        local mine = LP.Character or myChar()
-        pcall(setNoClip, v and mine or nil, v)
+
+    section("БХОП / СТРЕЙФ")
+    setBhop = row("Бхоп и набор скорости", BHOP.on, function(v)
+        BHOP.on = v
+        BHOP.lastJump = 0
+        if not v and not CONFIG.speedHack then releaseMotor() end
     end)
+    bindRow("Бинд бхопа", function() return BHOP.key end, function(k) BHOP.key = k end)
+    row("Авто-прыжок", BHOP.autoJump, function(v)
+        BHOP.autoJump = v
+    end, 26)
+    slider("Сила стрейф-ускорения", 10, 300, BHOP.accel, function(v)
+        BHOP.accel = v
+    end, 5)
+    slider("Импульс стрейфа", 8, 80, BHOP.airWish, function(v)
+        BHOP.airWish = v
+    end, 1)
+    slider("Потолок разгона", 60, 1200, BHOP.maxSpeed, function(v)
+        BHOP.maxSpeed = v
+    end, 10)
+    slider("Ускорение на земле", 0, 60, BHOP.groundAccel, function(v)
+        BHOP.groundAccel = v
+    end, 1)
+
+    panel = subPages.jmp
+    section("ПРЫЖОК")
+    setInf = row("Бесконечный прыжок", CONFIG.infJump, function(v)
+        CONFIG.infJump = v
+        airJumps = 0
+    end)
+    slider("Прыжков в воздухе", -1, 10, CONFIG.jumpLimit, function(v)
+        CONFIG.jumpLimit = v
+        airJumps = 0
+    end, 1, function(v)
+        if v < 0 then return "∞" end
+        if v == 0 then return "бхоп" end
+        return tostring(v)
+    end)
+
+    panel = subPages.wall
     section("ПРИЛИПАНИЕ К СТЕНЕ")
     setWall = row("Держаться за стену", WALL.on, function(v)
         WALL.on = v
@@ -2344,29 +2494,6 @@ local function build()
     slider("Скорость по стене", 5, 120, WALL.speed, function(v)
         WALL.speed = v
     end, 1)
-    section("ЗАЩИТА")
-    row("Иммунитет к урону и чекпоинтам", PROTECT.parts, function(v)
-        PROTECT.parts = v
-        if v then scanHazards() else clearHazards() end
-    end)
-    row("Держать здоровье", PROTECT.godHealth, function(v)
-        PROTECT.godHealth = v
-        if v then healNow() end
-    end, 26)
-    button("Просканировать опасные части", function() scanHazards() end)
-    section("ПРЫЖОК")
-    setInf = row("Бесконечный прыжок", CONFIG.infJump, function(v)
-        CONFIG.infJump = v
-        airJumps = 0
-    end)
-    slider("Прыжков в воздухе", -1, 10, CONFIG.jumpLimit, function(v)
-        CONFIG.jumpLimit = v
-        airJumps = 0
-    end, 1, function(v)
-        if v < 0 then return "∞" end
-        if v == 0 then return "бхоп" end
-        return tostring(v)
-    end)
 
     panel = pages.cam
     section("КАМЕРА")
@@ -2380,7 +2507,7 @@ local function build()
     if sl then sl:Destroy() end
     local grid = Instance.new("UIGridLayout", skyPage)
     grid.CellSize = UDim2.new(0.333, -4, 0, 26)
-    grid.CellPadding = UDim2.new(0, 4, 0, 4)
+    grid.CellPadding = UDim.new(0, 4, 0, 4)
     panel = skyPage
     button("Выкл", function() applySky("off") end)
     button("Ночь", function() applySky("night") end)
@@ -2420,6 +2547,22 @@ local function build()
     end, 5)
 
     panel = pages.misc
+    section("КОЛЛИЗИИ")
+    setNoClip = row("Ноклип", CONFIG.noclip, function(v)
+        CONFIG.noclip = v
+        local mine = LP.Character or myChar()
+        pcall(setNoClip, v and mine or nil, v)
+    end)
+    section("ЗАЩИТА")
+    row("Иммунитет к урону и чекпоинтам", PROTECT.parts, function(v)
+        PROTECT.parts = v
+        if v then scanHazards() else clearHazards() end
+    end)
+    row("Держать здоровье", PROTECT.godHealth, function(v)
+        PROTECT.godHealth = v
+        if v then healNow() end
+    end, 26)
+    button("Просканировать опасные части", function() scanHazards() end)
     section("ПРОЧЕЕ")
     button("Аксессуар заново", function()
         if accCurrent == 0 then accCurrent = ACCS[1].id end
@@ -2456,6 +2599,7 @@ local function build()
         print("[Venice] аура:", tostring(AURA.on), "режим:", AURA.mode, "стиль:", AURA.style)
         print("[Venice] аксессуар:", accCurrent, "| состояние:", accState, "| кэш:", accTemplate and "есть" or "нет", "| на голове:", tostring(hasAcc()), "| статус:", accLast)
         print("[Venice] спидхак:", tostring(CONFIG.speedHack), "режим:", CONFIG.speedMode, "бинду:", CONFIG.speedKey.Name, "скорость:", CONFIG.walkSpeed, "текущая:", speedCur, "факт WS:", hum and hum.WalkSpeed or "-")
+        print("[Venice] бхоп:", tostring(BHOP.on), "бинду:", BHOP.key.Name, "ускорение:", BHOP.accel, "импульс:", BHOP.airWish, "потолок:", BHOP.maxSpeed)
         print("[Venice] мотор:", motor and "жив" or "нет")
         print("[Venice] прилипание:", tostring(WALL.on), "бинду:", WALL.key.Name, "скорость:", WALL.speed, "держится:", tostring(WALL.attached))
         print("[Venice] защита частей:", tostring(PROTECT.parts), "здоровье:", tostring(PROTECT.godHealth))
@@ -2473,6 +2617,7 @@ local function build()
         WALL.on = false
         PROTECT.parts = false
         PROTECT.godHealth = false
+        BHOP.on = false
         speedCur = 0
         wantVel = nil
         accCurrent = 0
@@ -2488,6 +2633,7 @@ local function build()
         if setSpeed then setSpeed(false) end
         if setNoClip then setNoClip(false) end
         if setWall then setWall(false) end
+        if setBhop then setBhop(false) end
         releaseMotor()
         pcall(clearHazards)
         syncFps()
@@ -2509,6 +2655,9 @@ local function build()
     end
     toggleWall = function()
         if setWall then setWall(not WALL.on) end
+    end
+    toggleBhop = function()
+        if setBhop then setBhop(not BHOP.on) end
     end
 
     panel = shell
@@ -2543,7 +2692,7 @@ local function build()
         end
     end)
 
-    print("[Venice] v38 · Z меню")
+    print("[Venice] v39 · Z меню")
 end
 
 build()
@@ -2567,6 +2716,7 @@ track(UIS.InputBegan:Connect(function(input, gp)
     if kc == Enum.KeyCode.Unknown then return end
     if kc == Enum.KeyCode.Z then setOpen() return end
     if toggleSpeed and kc == CONFIG.speedKey then toggleSpeed() return end
+    if toggleBhop and kc == BHOP.key then toggleBhop() return end
     if toggleWall and kc == WALL.key then toggleWall() return end
 end))
 
