@@ -2,7 +2,7 @@ if getgenv().VeniceCos then pcall(function() getgenv().VeniceCos:Destroy() end) 
 if getgenv().VeniceCosConns then
     for _, c in ipairs(getgenv().VeniceCosConns) do pcall(function() c:Disconnect() end) end
 end
-getgenv().VeniceCosConns = {}
+getgenv().VeniceCosConns = {} -- пизда
 
 local ref = cloneref or function(s) return s end
 local Players  = ref(game:GetService("Players"))
@@ -28,7 +28,8 @@ local CONFIG = {
 }
 local FPS = { boost = false, shadowsOff = false, fxOff = false, partsOff = false, cap = 240 }
 local AURA = { on = false, size = 1, speed = 1, hue = 0, mode = "rainbow", color = Color3.fromRGB(152, 132, 255), style = "both" }
-local WALL = { on = false, speed = 55, reach = 3.5, key = Enum.KeyCode.H, attached = false }
+local WALL = { on = false, speed = 35, reach = 3.5, key = Enum.KeyCode.H, attached = false }
+local PROTECT = { parts = true, godHealth = true }
 
 local ACCS = {
     { id = 132809431,  name = "Doomsekkar" },
@@ -832,63 +833,158 @@ local function setNoClip(char, on)
     end
 end
 
--- ============================== лазанье по стенам ==============================
+-- ============================== защита от урона и чекпоинтов ==============================
 
-local function wallClimb(char)
-    if not WALL.on then return end
-    local hum = char and char:FindFirstChildOfClass("Humanoid")
-    local root = hum and hum.RootPart
-    if not root or hum.Health <= 0 or hum.SeatPart then return end
+local TOUCH_ATTR = "VeniceOrigTouch"
+local HAZ = {
+    "kill", "damage", "dmg", "hurt", "lava", "spike", "saw", "trap", "hazard",
+    "death", "die", "void", "poison", "acid", "burn", "crush", "squash",
+    "checkpoint", "check_point", "respawn", "reset", "teleport", "killbrick",
+}
 
-    local moving = inputDir()
-    local onFloor = hum.FloorMaterial ~= Enum.Material.Air
-    if onFloor and moving.Magnitude < 0.1 then
-        if WALL.attached then
-            WALL.attached = false
-            dropMotor()
+local function isHazName(name)
+    local n = name:lower()
+    for _, p in ipairs(HAZ) do
+        if n:find(p, 1, true) then return true end
+    end
+    return false
+end
+
+local function protectPart(d, on)
+    if not d:IsA("BasePart") then return end
+    local char = LP.Character
+    if char and d:IsDescendantOf(char) then return end
+    if on then
+        if not isHazName(d.Name) then return end
+        if d:GetAttribute(TOUCH_ATTR) == nil then
+            pcall(function() d:SetAttribute(TOUCH_ATTR, d.CanTouch) end)
         end
-        return
+        if d.CanTouch then pcall(function() d.CanTouch = false end) end
+    else
+        local o = d:GetAttribute(TOUCH_ATTR)
+        if o ~= nil then
+            pcall(function() d.CanTouch = o end)
+            pcall(function() d:SetAttribute(TOUCH_ATTR, nil) end)
+        end
     end
+end
 
-    local dir = moving
-    if dir.Magnitude < 0.1 then
-        local cam = WS.CurrentCamera
-        if not cam then return end
-        local look = cam.CFrame.LookVector
-        dir = Vector3.new(look.X, 0, look.Z)
-        if dir.Magnitude < 0.01 then return end
-        dir = dir.Unit
+local function scanHazards()
+    if not PROTECT.parts then return end
+    local n = 0
+    for _, d in ipairs(WS:GetDescendants()) do
+        if d:IsA("BasePart") and isHazName(d.Name) then
+            protectPart(d, true)
+            n = n + 1
+            if n > 8000 then break end
+        end
     end
+    print("[Venice] защищено частей:", n)
+end
 
+local function clearHazards()
+    for _, d in ipairs(WS:GetDescendants()) do
+        if d:IsA("BasePart") and d:GetAttribute(TOUCH_ATTR) ~= nil then
+            protectPart(d, false)
+        end
+    end
+end
+
+local function healNow()
+    local char = LP.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    if hum and hum.Health > 0 then pcall(function() hum.Health = hum.MaxHealth end) end
+end
+
+task.spawn(function()
+    while true do
+        task.wait(4)
+        if PROTECT.parts then pcall(scanHazards) end
+    end
+end)
+
+track(WS.DescendantAdded:Connect(function(d)
+    if not PROTECT.parts then return end
+    if d:IsA("BasePart") and isHazName(d.Name) then pcall(protectPart, d, true) end
+end))
+
+-- ============================== прилипание к стене ==============================
+
+local function wallRay(char, root, dir, dist)
     local params = RaycastParams.new()
     params.FilterType = Enum.RaycastFilterType.Exclude
     params.FilterDescendantsInstances = { char }
+    return WS:Raycast(root.Position, dir * dist, params)
+end
 
-    local hit = WS:Raycast(root.Position, dir * WALL.reach, params)
-    if not hit then
-        if WALL.attached then
-            WALL.attached = false
-            dropMotor()
-        end
+local function wallDetach(hum, root)
+    if not WALL.attached then return end
+    WALL.attached = false
+    dropMotor()
+    if hum then pcall(function() hum:SetStateEnabled(Enum.HumanoidStateType.Climbing, true) end) end
+    if root then pcall(function() root.AssemblyLinearVelocity = Vector3.new(0, 0, 0) end) end
+end
+
+local function wallStick(char)
+    if not WALL.on then return end
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    local root = hum and hum.RootPart
+    if not root or hum.Health <= 0 or hum.SeatPart then
+        wallDetach(hum, root)
         return
     end
 
-    local ahead = WS:Raycast(root.Position + Vector3.new(0, 3, 0) + dir * 0.4, dir * WALL.reach, params)
-    local spd = WALL.speed
+    local cam = WS.CurrentCamera
+    local move = inputDir()
+    local look = cam and cam.CFrame.LookVector or root.CFrame.LookVector
+    look = Vector3.new(look.X, 0, look.Z)
+    if look.Magnitude < 0.01 then look = Vector3.new(0, 0, -1) end
+    look = look.Unit
 
-    if not ahead then
-        driveMotor(root, Vector3.new(dir.X * spd * 0.7, spd * 1.1, dir.Z * spd * 0.7), true)
-    else
-        driveMotor(root, Vector3.new(dir.X * spd * 0.4, spd, dir.Z * spd * 0.4), true)
+    if WALL.attached then
+        if UIS:IsKeyDown(Enum.KeyCode.Space) then
+            wallDetach(hum, root)
+            return
+        end
+        local hit = wallRay(char, root, look, WALL.reach)
+        if not hit then
+            wallDetach(hum, root)
+            return
+        end
+        local n = Vector3.new(hit.Normal.X, 0, hit.Normal.Z)
+        if n.Magnitude < 0.01 then
+            wallDetach(hum, root)
+            return
+        end
+        n = n.Unit
+        local tangent = n:Cross(Vector3.new(0, 1, 0))
+        if tangent.Magnitude < 0.01 then
+            wallDetach(hum, root)
+            return
+        end
+        tangent = tangent.Unit
+
+        local side = 0
+        if move.Magnitude > 0.05 then side = move:Dot(tangent) end
+
+        local vel = tangent * (side * WALL.speed) - n * 3
+        driveMotor(root, Vector3.new(vel.X, 0, vel.Z), true)
+        root.AssemblyLinearVelocity = Vector3.new(vel.X, 0, vel.Z)
+        return
     end
 
-    if not WALL.attached then
-        WALL.attached = true
-        pcall(function() hum:SetStateEnabled(Enum.HumanoidStateType.Climbing, false) end)
-    end
+    local onFloor = hum.FloorMaterial ~= Enum.Material.Air
+    if onFloor and move.Magnitude < 0.1 then return end
 
-    local v = root.AssemblyLinearVelocity
-    root.AssemblyLinearVelocity = Vector3.new(v.X, spd, v.Z)
+    local hit = wallRay(char, root, look, WALL.reach)
+    if not hit then return end
+    local n = Vector3.new(hit.Normal.X, 0, hit.Normal.Z)
+    if n.Magnitude < 0.01 then return end
+    n = n.Unit
+
+    WALL.attached = true
+    pcall(function() hum:SetStateEnabled(Enum.HumanoidStateType.Climbing, false) end)
+    driveMotor(root, Vector3.new(-n.X * 3, 0, -n.Z * 3), true)
 end
 
 -- ============================== тики движения ==============================
@@ -907,8 +1003,8 @@ pcall(function()
         else
             speedCur = 0
         end
-        if WALL.on then pcall(wallClimb, char) end
-        if not CONFIG.speedHack and not WALL.on and motor then releaseMotor() end
+        if WALL.on then pcall(wallStick, char) end
+        if not CONFIG.speedHack and not WALL.attached and motor then releaseMotor() end
         if CONFIG.noclip then pcall(setNoClip, char, true) end
     end)
     moveBound = true
@@ -922,13 +1018,14 @@ if not moveBound then
             pcall(applySpeed, char)
             pcall(pushVelocity, char, dt)
         end
-        if WALL.on then pcall(wallClimb, char) end
+        if WALL.on then pcall(wallStick, char) end
         if CONFIG.noclip then pcall(setNoClip, char, true) end
     end))
 end
 
 -- добиваем откат уже после физики
 track(RunS.Heartbeat:Connect(function()
+    if WALL.attached then return end
     if not wantVel then return end
     local char = LP.Character
     local hum = char and char:FindFirstChildOfClass("Humanoid")
@@ -1612,6 +1709,7 @@ end
 -- ============================== слежение за персонажем ==============================
 
 local watched = setmetatable({}, { __mode = "k" })
+local healthGuard = false
 
 local function watchChar(char)
     if not char then return end
@@ -1624,6 +1722,7 @@ local function watchChar(char)
     airJumps = 0
     accMountAt = 0
     accState = accTemplate and "ready" or "idle"
+    WALL.attached = false
 
     enforce()
     for _, d in ipairs({ 0.2, 0.5, 0.9, 1.4, 2.2, 3.2 }) do
@@ -1675,6 +1774,14 @@ local function watchChar(char)
             if speedWriting or not CONFIG.speedHack then return end
             if hum.WalkSpeed ~= math.max(speedCur, 8) then
                 task.defer(function() pcall(applySpeed, char) end)
+            end
+        end))
+        track(hum:GetPropertyChangedSignal("Health"):Connect(function()
+            if not PROTECT.godHealth or healthGuard then return end
+            if hum.Health < hum.MaxHealth then
+                healthGuard = true
+                pcall(function() hum.Health = hum.MaxHealth end)
+                healthGuard = false
             end
         end))
         track(hum.Died:Connect(function()
@@ -2222,23 +2329,31 @@ local function build()
         local mine = LP.Character or myChar()
         pcall(setNoClip, v and mine or nil, v)
     end)
-    section("ЛАЗАНЬЕ ПО СТЕНАМ")
-    setWall = row("Карабкаться", WALL.on, function(v)
+    section("ПРИЛИПАНИЕ К СТЕНЕ")
+    setWall = row("Держаться за стену", WALL.on, function(v)
         WALL.on = v
         if not v then
-            WALL.attached = false
-            releaseMotor()
             local char = LP.Character
             local hum = char and char:FindFirstChildOfClass("Humanoid")
             local root = hum and hum.RootPart
-            if root then pcall(function() root.AssemblyLinearVelocity = Vector3.zero end) end
+            wallDetach(hum, root)
             if hum then pcall(function() hum:SetStateEnabled(Enum.HumanoidStateType.Climbing, true) end) end
         end
     end)
-    bindRow("Бинд карабканья", function() return WALL.key end, function(k) WALL.key = k end)
-    slider("Скорость лазанья", 15, 150, WALL.speed, function(v)
+    bindRow("Бинд прилипания", function() return WALL.key end, function(k) WALL.key = k end)
+    slider("Скорость по стене", 5, 120, WALL.speed, function(v)
         WALL.speed = v
     end, 1)
+    section("ЗАЩИТА")
+    row("Иммунитет к урону и чекпоинтам", PROTECT.parts, function(v)
+        PROTECT.parts = v
+        if v then scanHazards() else clearHazards() end
+    end)
+    row("Держать здоровье", PROTECT.godHealth, function(v)
+        PROTECT.godHealth = v
+        if v then healNow() end
+    end, 26)
+    button("Просканировать опасные части", function() scanHazards() end)
     section("ПРЫЖОК")
     setInf = row("Бесконечный прыжок", CONFIG.infJump, function(v)
         CONFIG.infJump = v
@@ -2319,6 +2434,7 @@ local function build()
 
         refreshScan()
         syncFps()
+        if PROTECT.parts then pcall(scanHazards) end
         if AURA.on then refreshAura() end
         if SKY.mode ~= "off" then pcall(applySky, SKY.mode) end
 
@@ -2341,7 +2457,8 @@ local function build()
         print("[Venice] аксессуар:", accCurrent, "| состояние:", accState, "| кэш:", accTemplate and "есть" or "нет", "| на голове:", tostring(hasAcc()), "| статус:", accLast)
         print("[Venice] спидхак:", tostring(CONFIG.speedHack), "режим:", CONFIG.speedMode, "бинду:", CONFIG.speedKey.Name, "скорость:", CONFIG.walkSpeed, "текущая:", speedCur, "факт WS:", hum and hum.WalkSpeed or "-")
         print("[Venice] мотор:", motor and "жив" or "нет")
-        print("[Venice] карабканье:", tostring(WALL.on), "бинду:", WALL.key.Name, "скорость:", WALL.speed)
+        print("[Venice] прилипание:", tostring(WALL.on), "бинду:", WALL.key.Name, "скорость:", WALL.speed, "держится:", tostring(WALL.attached))
+        print("[Venice] защита частей:", tostring(PROTECT.parts), "здоровье:", tostring(PROTECT.godHealth))
         print("[Venice] ноклип:", tostring(CONFIG.noclip), "группа:", tostring(groupOk))
         print("[Venice] частей в папке:", partsFolder and #partsFolder:GetChildren() or 0)
         print("[Venice] fps:", tostring(FPS.boost), "частиц убито:", #killedParts, "эффектов:", #killedFx)
@@ -2354,7 +2471,8 @@ local function build()
         CONFIG.noclip = false
         AURA.on = false
         WALL.on = false
-        WALL.attached = false
+        PROTECT.parts = false
+        PROTECT.godHealth = false
         speedCur = 0
         wantVel = nil
         accCurrent = 0
@@ -2371,6 +2489,7 @@ local function build()
         if setNoClip then setNoClip(false) end
         if setWall then setWall(false) end
         releaseMotor()
+        pcall(clearHazards)
         syncFps()
         for _, c in ipairs(targets()) do
             pcall(applyHeadless, c, false)
@@ -2424,7 +2543,7 @@ local function build()
         end
     end)
 
-    print("[Venice] v37 · Z меню")
+    print("[Venice] v38 · Z меню")
 end
 
 build()
