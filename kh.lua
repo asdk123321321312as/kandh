@@ -2,7 +2,7 @@ if getgenv().VeniceCos then pcall(function() getgenv().VeniceCos:Destroy() end) 
 if getgenv().VeniceCosConns then
     for _, c in ipairs(getgenv().VeniceCosConns) do pcall(function() c:Disconnect() end) end
 end
-getgenv().VeniceCosConns = {} -- пизда
+getgenv().VeniceCosConns = {}
 
 local ref = cloneref or function(s) return s end
 local Players  = ref(game:GetService("Players"))
@@ -23,9 +23,11 @@ local CONFIG = {
     korblox = true, headless = true, force = true,
     infJump = false, jumpLimit = -1,
     speedHack = false, walkSpeed = 60, speedBoost = true, noclip = false,
+    speedKey = Enum.KeyCode.G,
 }
 local FPS = { boost = false, shadowsOff = false, fxOff = false, partsOff = false, cap = 240 }
 local AURA = { on = false, size = 1, speed = 1, hue = 0, mode = "rainbow", color = Color3.fromRGB(152, 132, 255), style = "both" }
+local WALL = { on = false, speed = 55, reach = 3.5, key = Enum.KeyCode.H }
 
 local ACCS = {
     { id = 132809431,  name = "Doomsekkar" },
@@ -233,10 +235,12 @@ end
 -- ============================== аксессуары ==============================
 
 local ACC_ATTR = "VeniceHatPart"
-local accBusy = false
-local accAt = 0
 local accLast = "не запускалось"
-local accTimer = nil
+local accTemplate = nil
+local accState = "idle"
+local accMountAt = 0
+local accFailAt = 0
+local accCache = {}
 
 local function accParts()
     local out = {}
@@ -269,109 +273,143 @@ local function grab(container)
 end
 
 local function loadAcc(id)
+    if accCache[id] then return accCache[id] end
     local errs = {}
 
     local ok, objs = pcall(function() return game:GetObjects("rbxassetid://" .. id) end)
     if ok and objs and #objs > 0 then
         local g = grab(objs)
-        if g then return g end
+        if g then accCache[id] = g return g end
         table.insert(errs, "GetObjects без частей")
     else
-        table.insert(errs, "GetObjects " .. tostring(objs))
+        table.insert(errs, "GetObjects")
     end
 
     local ok2, model = pcall(function() return game:GetService("InsertService"):LoadAsset(id) end)
     if ok2 and model then
         local g = grab(model:GetChildren())
-        if g then return g end
+        if g then accCache[id] = g return g end
         table.insert(errs, "LoadAsset без частей")
     else
-        table.insert(errs, "LoadAsset " .. tostring(model))
+        table.insert(errs, "LoadAsset")
     end
 
     return nil, table.concat(errs, " | ")
 end
 
-local function applyAcc(id)
-    if accBusy then return end
-    local char = myChar()
+-- загрузка вынесена из кадра рендера: enforce только монтирует готовый кэш
+local function loadAccAsync(id)
+    if accState == "loading" then return end
+    accState = "loading"
+    accLast = "загрузка ассета"
+    task.spawn(function()
+        local why = "?"
+        for attempt = 1, 3 do
+            local ok, res = pcall(function()
+                local h, e = loadAcc(id)
+                if not h then error(e or "нет частей") end
+                return h
+            end)
+            if accCurrent ~= id then
+                accState = "idle"
+                return
+            end
+            if ok then
+                accTemplate = res
+                accState = "ready"
+                accLast = "ассет готов"
+                accMountAt = 0
+                return
+            end
+            why = tostring(res)
+            accLast = "ошибка: " .. why
+            task.wait(0.5 * attempt)
+        end
+        accState = "failed"
+        accFailAt = os.clock()
+    end)
+end
+
+local function handleFrom(template)
+    if template:IsA("Accessory") or template:IsA("Hat") then
+        return template:FindFirstChild("Handle") or template:FindFirstChildWhichIsA("BasePart", true)
+    end
+    if template:IsA("BasePart") then return template end
+    return template:FindFirstChildWhichIsA("BasePart", true)
+end
+
+local function mountAcc()
+    if accState ~= "ready" or not accTemplate then return end
+    if hasAcc() then return end
+    local char = LP.Character or myChar()
     local head = char and char:FindFirstChild("Head")
     if not head or not head:IsA("BasePart") then
-        accLast = "нет головы | Character=" .. tostring(LP.Character)
+        accLast = "нет головы"
         return
     end
-    if hasAcc() then return end
-    accBusy = true
 
-    local ok, res = pcall(function()
-        local found, why = loadAcc(id)
-        if not found then error("ассет: " .. tostring(why)) end
+    local src = handleFrom(accTemplate)
+    if not src then accState = "failed" accFailAt = os.clock() return end
 
-        local handle
-        if found:IsA("Accessory") or found:IsA("Hat") then
-            handle = found:FindFirstChild("Handle") or found:FindFirstChildWhichIsA("BasePart", true)
-        elseif found:IsA("BasePart") then
-            handle = found
-        else
-            handle = found:FindFirstChildWhichIsA("BasePart", true)
-        end
-        if not handle then error("в ассете нет Handle") end
+    local handle = src:Clone()
+    handle.Name = "VeniceHatHandle"
+    handle:SetAttribute(ACC_ATTR, true)
+    handle.Anchored = false
+    handle.CanCollide = false
+    handle.CanQuery = false
+    handle.CanTouch = false
+    handle.CastShadow = true
+    handle.Transparency = 0
+    pcall(function() handle.Massless = true end)
 
-        handle.Name = "VeniceHatHandle"
-        handle:SetAttribute(ACC_ATTR, true)
-        handle.Anchored = false
-        handle.CanCollide = false
-        handle.CanQuery = false
-        handle.CanTouch = false
-        handle.CastShadow = true
-        handle.Transparency = 0
-        pcall(function() handle.Massless = true end)
-        handle.Parent = getFolder()
+    handle.LocalTransparencyModifier = 0
+    local biggest = math.max(handle.Size.X, handle.Size.Y, handle.Size.Z)
+    if biggest < 0.25 then
+        handle.Size = handle.Size * (0.6 / math.max(biggest, 0.01))
+    end
 
-        handle.LocalTransparencyModifier = 0
-        local biggest = math.max(handle.Size.X, handle.Size.Y, handle.Size.Z)
-        if biggest < 0.25 then
-            handle.Size = handle.Size * (0.6 / math.max(biggest, 0.01))
-        end
+    local att = handle:FindFirstChildWhichIsA("Attachment")
+    if att then
+        handle.CFrame = head.CFrame * CFrame.new(0, head.Size.Y / 2 + accOffsetY, 0) * att.CFrame:Inverse()
+    else
+        local lift = head.Size.Y / 2 + handle.Size.Y / 2 * 0.5 + accOffsetY
+        handle.CFrame = head.CFrame * CFrame.new(0, lift, 0)
+    end
 
-        local att = handle:FindFirstChildWhichIsA("Attachment")
-        if att then
-            handle.CFrame = head.CFrame * CFrame.new(0, head.Size.Y / 2 + accOffsetY, 0) * att.CFrame:Inverse()
-        else
-            local lift = head.Size.Y / 2 + handle.Size.Y / 2 * 0.5 + accOffsetY
-            handle.CFrame = head.CFrame * CFrame.new(0, lift, 0)
-        end
+    handle.Parent = getFolder()
 
-        local w = Instance.new("WeldConstraint")
-        w.Part0 = handle
-        w.Part1 = head
-        w.Parent = handle
-        return "приварено (папка)"
-    end)
+    local w = Instance.new("WeldConstraint")
+    w.Part0 = handle
+    w.Part1 = head
+    w.Parent = handle
 
-    accBusy = false
-    accLast = ok and res or ("ошибка: " .. tostring(res))
+    accLast = "надет"
 end
 
 local function setAcc(id)
     accCurrent = id
     pcall(clearAcc)
-    accAt = 0
-    if id ~= 0 then
-        task.spawn(function() pcall(applyAcc, id) end)
-    else
+    accTemplate = nil
+    accMountAt = 0
+    if id == 0 then
+        accState = "idle"
         accLast = "снято"
+        return
     end
+    accState = "idle"
+    loadAccAsync(id)
 end
 
 local function reAcc()
-    if accTimer then pcall(function() task.cancel(accTimer) end) end
-    accTimer = task.delay(0.2, function()
-        accTimer = nil
-        pcall(clearAcc)
-        accAt = 0
-        if accCurrent ~= 0 then task.spawn(function() pcall(applyAcc, accCurrent) end) end
-    end)
+    pcall(clearAcc)
+    accMountAt = 0
+    if accCurrent == 0 then return end
+    if accTemplate then
+        accState = "ready"
+        task.defer(function() pcall(mountAcc) end)
+    else
+        loadAccAsync(accCurrent)
+    end
 end
 
 -- ============================== коробокс ==============================
@@ -563,6 +601,22 @@ local function cleanupParts(list)
     if meshCache and not meshCache.Parent then meshCache = nil end
 end
 
+-- ============================== ввод ==============================
+
+local function inputDir()
+    local cam = WS.CurrentCamera
+    if not cam then return Vector3.zero end
+    local cf = cam.CFrame
+    local v = Vector3.zero
+    if UIS:IsKeyDown(Enum.KeyCode.W) then v = v + cf.LookVector end
+    if UIS:IsKeyDown(Enum.KeyCode.S) then v = v - cf.LookVector end
+    if UIS:IsKeyDown(Enum.KeyCode.A) then v = v - cf.RightVector end
+    if UIS:IsKeyDown(Enum.KeyCode.D) then v = v + cf.RightVector end
+    v = Vector3.new(v.X, 0, v.Z)
+    if v.Magnitude > 0.01 then return v.Unit end
+    return Vector3.zero
+end
+
 -- ============================== спидхак / ноклип ==============================
 
 local WS_ATTR  = "VeniceOrigSpeed"
@@ -570,6 +624,7 @@ local COL_ATTR = "VeniceOrigCol"
 local speedWriting = false
 local groupOk = false
 local GROUP = "VeniceNoClip"
+local noclipTouched = setmetatable({}, { __mode = "k" })
 
 local function ensureGroup()
     if groupOk then return true end
@@ -603,10 +658,18 @@ local function boostVelocity(char)
     local hum = char and char:FindFirstChildOfClass("Humanoid")
     local root = hum and hum.RootPart
     if not root or hum.Health <= 0 then return end
-    local dir = hum.MoveDirection
-    if dir.Magnitude < 0.05 then return end
+
+    local dir = inputDir()
+    if dir.Magnitude < 0.05 then
+        dir = hum.MoveDirection
+        if dir.Magnitude < 0.05 then return end
+        dir = Vector3.new(dir.X, 0, dir.Z)
+        if dir.Magnitude < 0.05 then return end
+        dir = dir.Unit
+    end
+
+    local want = dir * CONFIG.walkSpeed
     local v = root.AssemblyLinearVelocity
-    local want = dir.Unit * CONFIG.walkSpeed
     local cur = Vector3.new(v.X, 0, v.Z)
     if cur.Magnitude < want.Magnitude then
         root.AssemblyLinearVelocity = Vector3.new(want.X, v.Y, want.Z)
@@ -625,34 +688,128 @@ local function restoreSpeed(char)
     end
 end
 
-local function setNoClip(char, on)
-    if not char then return end
-    if on then ensureGroup() end
-    for _, d in ipairs(char:GetDescendants()) do
-        if d:IsA("BasePart") then
-            if on then
-                if d:GetAttribute(COL_ATTR) == nil then
-                    pcall(function() d:SetAttribute(COL_ATTR, d.CanCollide) end)
-                end
-                if d.CanCollide then pcall(function() d.CanCollide = false end) end
-                if groupOk and d.CollisionGroup ~= GROUP then
-                    pcall(function() d.CollisionGroup = GROUP end)
-                end
-            else
-                local o = d:GetAttribute(COL_ATTR)
-                if o ~= nil then
-                    pcall(function() d.CanCollide = o end)
-                    pcall(function() d:SetAttribute(COL_ATTR, nil) end)
-                end
-                if d.CollisionGroup == GROUP then
-                    pcall(function() d.CollisionGroup = "Default" end)
-                end
-            end
+local function noClipPart(d, on)
+    if on then
+        if d:GetAttribute(COL_ATTR) == nil then
+            pcall(function() d:SetAttribute(COL_ATTR, d.CanCollide) end)
         end
+        if d.CanCollide then pcall(function() d.CanCollide = false end) end
+        if groupOk and d.CollisionGroup ~= GROUP then
+            pcall(function() d.CollisionGroup = GROUP end)
+        end
+        noclipTouched[d] = true
+    else
+        local o = d:GetAttribute(COL_ATTR)
+        if o ~= nil then
+            pcall(function() d.CanCollide = o end)
+            pcall(function() d:SetAttribute(COL_ATTR, nil) end)
+        end
+        if d.CollisionGroup == GROUP then
+            pcall(function() d.CollisionGroup = "Default" end)
+        end
+        noclipTouched[d] = nil
     end
 end
 
--- два тика: до физики и после — игру перекрывает в обоих случаях
+local function unstick(char)
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    local root = hum and hum.RootPart
+    if not root then return end
+    local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Exclude
+    params.FilterDescendantsInstances = { char }
+    local hit = WS:Raycast(root.Position + Vector3.new(0, 300, 0), Vector3.new(0, -700, 0), params)
+    if hit and hit.Position.Y > root.Position.Y + 1.5 then
+        local delta = math.min(hit.Position.Y - root.Position.Y + 3, 400)
+        char:PivotTo(char:GetPivot() + Vector3.new(0, delta, 0))
+        pcall(function() root.AssemblyLinearVelocity = Vector3.zero end)
+    end
+end
+
+local function setNoClip(char, on)
+    if on then
+        if not char then return end
+        ensureGroup()
+        for _, d in ipairs(char:GetDescendants()) do
+            if d:IsA("BasePart") then noClipPart(d, true) end
+        end
+        return
+    end
+
+    for d in pairs(noclipTouched) do
+        if d.Parent then noClipPart(d, false) end
+        noclipTouched[d] = nil
+    end
+
+    local list, seen = {}, {}
+    local mine = LP.Character or myChar()
+    if mine then
+        seen[mine] = true
+        table.insert(list, mine)
+    end
+    for _, c in ipairs(targets()) do
+        if not seen[c] then
+            seen[c] = true
+            table.insert(list, c)
+        end
+    end
+
+    for _, c in ipairs(list) do
+        for _, d in ipairs(c:GetDescendants()) do
+            if d:IsA("BasePart") and d:GetAttribute(COL_ATTR) ~= nil then
+                noClipPart(d, false)
+            end
+        end
+        pcall(unstick, c)
+    end
+end
+
+-- ============================== лазанье по стенам ==============================
+
+local function wallClimb(char)
+    if not WALL.on then return end
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    local root = hum and hum.RootPart
+    if not root or hum.Health <= 0 or hum.SeatPart then return end
+
+    local moving = inputDir()
+    local onFloor = hum.FloorMaterial ~= Enum.Material.Air
+    if onFloor and moving.Magnitude < 0.1 then return end
+
+    local dir = moving
+    if dir.Magnitude < 0.1 then
+        local cam = WS.CurrentCamera
+        if not cam then return end
+        local look = cam.CFrame.LookVector
+        dir = Vector3.new(look.X, 0, look.Z)
+        if dir.Magnitude < 0.01 then return end
+        dir = dir.Unit
+    end
+
+    local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Exclude
+    params.FilterDescendantsInstances = { char }
+
+    local origin = root.Position
+    local hit = WS:Raycast(origin, dir * WALL.reach, params)
+    if not hit then return end
+
+    local ahead = WS:Raycast(origin + Vector3.new(0, 3, 0) + dir * 0.5, dir * WALL.reach, params)
+    local v = root.AssemblyLinearVelocity
+    local push = Vector3.new(dir.X * WALL.speed * 0.4, WALL.speed, dir.Z * WALL.speed * 0.4)
+
+    if not ahead then
+        -- верх стены: подкидываем на карниз
+        root.AssemblyLinearVelocity = Vector3.new(v.X, WALL.speed * 1.15, v.Z)
+    else
+        root.AssemblyLinearVelocity = push
+    end
+
+    pcall(function() hum:ChangeState(Enum.HumanoidStateType.Running) end)
+end
+
+-- ============================== тики ==============================
+
 track(RunS.Stepped:Connect(function()
     local char = LP.Character
     if not char then return end
@@ -660,6 +817,7 @@ track(RunS.Stepped:Connect(function()
         pcall(applySpeed, char)
         pcall(boostVelocity, char)
     end
+    if WALL.on then pcall(wallClimb, char) end
     if CONFIG.noclip then pcall(setNoClip, char, true) end
 end))
 
@@ -1268,136 +1426,6 @@ task.spawn(function()
     end
 end)
 
--- ============================== скины других игроков ==============================
-
-local skinBusy = false
-local skinCurrent = nil
-local skinLast = "не запускалось"
-local skinLabels = {}
-
-local function setSkinStatus(t)
-    skinLast = t
-    for _, l in ipairs(skinLabels) do
-        if l.Parent then pcall(function() l.Text = "  " .. t end) end
-    end
-end
-
-local function clearAccessories(char)
-    for _, d in ipairs(char:GetChildren()) do
-        if d:IsA("Accessory") or d:IsA("Hat") then pcall(function() d:Destroy() end) end
-    end
-end
-
-local function copyAppearanceFallback(char, uid)
-    local model = Players:GetCharacterAppearanceAsync(uid)
-    if not model then error("нет модели аватара") end
-
-    local bc = model:FindFirstChildOfClass("BodyColors")
-    if bc then
-        local old = char:FindFirstChildOfClass("BodyColors")
-        if old then pcall(function() old:Destroy() end) end
-        pcall(function() bc:Clone().Parent = char end)
-    end
-
-    clearAccessories(char)
-
-    for _, acc in ipairs(model:GetChildren()) do
-        if acc:IsA("Accessory") or acc:IsA("Hat") then
-            local handle = acc:FindFirstChild("Handle")
-            local w = handle and handle:FindFirstChildWhichIsA("Weld")
-            local targetName = w and w.Part1 and w.Part1.Name
-            local target = targetName and char:FindFirstChild(targetName)
-            if target and target:IsA("BasePart") then
-                local clone = acc:Clone()
-                for _, d in ipairs(clone:GetDescendants()) do
-                    if d:IsA("Weld") or d:IsA("Motor6D") then pcall(function() d:Destroy() end) end
-                end
-                local ch = clone:FindFirstChild("Handle")
-                if ch then
-                    ch.Anchored = false
-                    ch.CanCollide = false
-                    pcall(function() ch.Massless = true end)
-                    local att = ch:FindFirstChildWhichIsA("Attachment")
-                    local tatt = att and target:FindFirstChild(att.Name)
-                    if tatt and tatt:IsA("Attachment") then
-                        ch.CFrame = tatt.WorldCFrame * att.CFrame:Inverse()
-                    else
-                        ch.CFrame = target.CFrame
-                    end
-                    local wc = Instance.new("WeldConstraint")
-                    wc.Part0 = ch
-                    wc.Part1 = target
-                    wc.Parent = ch
-                end
-                clone.Parent = char
-            end
-        end
-    end
-end
-
-local function applySkinUserId(uid, quiet)
-    if skinBusy then return false end
-    local char = myChar()
-    local hum = char and char:FindFirstChildOfClass("Humanoid")
-    if not hum then setSkinStatus("нет персонажа") return false end
-
-    skinBusy = true
-    local ok, err = pcall(function()
-        local desc = Players:GetHumanoidDescriptionFromUserId(uid)
-        if not desc then error("нет описания") end
-        hum:ApplyDescription(desc)
-    end)
-    if not ok then
-        ok, err = pcall(copyAppearanceFallback, char, uid)
-    end
-    skinBusy = false
-
-    if ok then
-        skinCurrent = uid
-        local nm = ""
-        pcall(function() nm = Players:GetNameFromUserIdAsync(uid) end)
-        setSkinStatus("надет скин " .. (nm ~= "" and nm or tostring(uid)))
-        task.defer(enforce)
-        task.delay(0.3, enforce)
-        task.delay(0.9, enforce)
-        task.delay(1.8, enforce)
-        return true
-    end
-    setSkinStatus("ошибка: " .. tostring(err))
-    return false
-end
-
-local function resolveUser(name)
-    name = tostring(name or ""):gsub("^%s+", ""):gsub("%s+$", "")
-    if name == "" then return nil, "пустое имя" end
-    for _, p in ipairs(Players:GetPlayers()) do
-        if p.Name:lower() == name:lower() or p.DisplayName:lower() == name:lower() then
-            return p.UserId, p.Name
-        end
-    end
-    local ok, id = pcall(function() return Players:GetUserIdFromNameAsync(name) end)
-    if ok and id then return id, name end
-    return nil, "игрок не найден"
-end
-
-local function copySkin(name)
-    task.spawn(function()
-        local uid, uname = resolveUser(name)
-        if not uid then
-            setSkinStatus(tostring(uname))
-            return
-        end
-        setSkinStatus("загрузка " .. tostring(uname))
-        applySkinUserId(uid)
-    end)
-end
-
-local function removeSkin()
-    skinCurrent = nil
-    applySkinUserId(LP.UserId)
-    setSkinStatus("свой скин")
-end
-
 -- ============================== фиксация ==============================
 
 local function enforce()
@@ -1427,9 +1455,11 @@ local function enforce()
 
     pcall(cleanupParts, list)
 
-    if accCurrent ~= 0 and not accBusy and not hasAcc() and os.clock() - accAt > 0.4 then
-        accAt = os.clock()
-        task.spawn(function() pcall(applyAcc, accCurrent) end)
+    if accCurrent ~= 0 and accState == "ready" and not hasAcc() and os.clock() - accMountAt > 0.4 then
+        accMountAt = os.clock()
+        pcall(mountAcc)
+    elseif accCurrent ~= 0 and accState == "failed" and os.clock() - accFailAt > 3 then
+        loadAccAsync(accCurrent)
     end
 
     pcall(applyFov)
@@ -1473,17 +1503,19 @@ local function watchChar(char)
     cmTries[char] = nil
     charMode[char] = nil
     airJumps = 0
-    accAt = 0
-    skinBusy = false
+    accMountAt = 0
+    accState = accTemplate and "ready" or (accCurrent ~= 0 and "idle" or "idle")
 
     enforce()
     for _, d in ipairs({ 0.2, 0.5, 0.9, 1.4, 2.2, 3.2 }) do
         task.delay(d, enforce)
     end
 
-    if skinCurrent then
-        task.delay(0.6, function()
-            if skinCurrent then pcall(applySkinUserId, skinCurrent, true) end
+    if accCurrent ~= 0 and not accTemplate then
+        task.delay(0.5, function()
+            if accCurrent ~= 0 and not accTemplate and accState ~= "loading" then
+                loadAccAsync(accCurrent)
+            end
         end)
     end
 
@@ -1491,13 +1523,7 @@ local function watchChar(char)
         if d:IsA("BasePart") or d:IsA("Accessory") or d:IsA("Hat") or d:IsA("Decal") or d:IsA("CharacterMesh") then
             if d:IsA("BasePart") then
                 hookPart(d)
-                if CONFIG.noclip then
-                    if d:GetAttribute(COL_ATTR) == nil then
-                        pcall(function() d:SetAttribute(COL_ATTR, d.CanCollide) end)
-                    end
-                    pcall(function() d.CanCollide = false end)
-                    if groupOk then pcall(function() d.CollisionGroup = GROUP end) end
-                end
+                if CONFIG.noclip then pcall(noClipPart, d, true) end
             end
             task.defer(enforce)
         end
@@ -1574,6 +1600,8 @@ end))
 
 local gui, panel, open = nil, nil, false
 local pages, tabBtns, activeTab = {}, {}, nil
+local setHeadless, setKorblox, setForce, setBoost, setInf, setAura, setSpeed, setNoClip, setBoostVel, setWall
+local toggleSpeed, toggleWall
 
 local function tw(o, t, p) TweenS:Create(o, TweenInfo.new(t), p):Play() end
 
@@ -1648,6 +1676,58 @@ local function row(text, default, cb, h)
     end
 end
 
+local function bindRow(text, getKey, setKey)
+    local r = Instance.new("Frame")
+    r.Size = UDim2.new(1, -8, 0, 28)
+    r.BackgroundColor3 = ROW
+    r.BorderSizePixel = 0
+    r.Parent = panel
+    Instance.new("UICorner", r).CornerRadius = UDim.new(0, 8)
+
+    local l = Instance.new("TextLabel")
+    l.Size = UDim2.new(1, -70, 1, 0)
+    l.Position = UDim2.fromOffset(10, 0)
+    l.BackgroundTransparency = 1
+    l.Font = Enum.Font.GothamSemibold
+    l.TextSize = 11
+    l.TextColor3 = TEXT
+    l.TextXAlignment = Enum.TextXAlignment.Left
+    l.Text = text
+    l.Parent = r
+
+    local b = Instance.new("TextButton")
+    b.Size = UDim2.fromOffset(54, 18)
+    b.Position = UDim2.new(1, -62, 0.5, -9)
+    b.BackgroundColor3 = OFF
+    b.BorderSizePixel = 0
+    b.AutoButtonColor = false
+    b.Font = Enum.Font.GothamBold
+    b.TextSize = 10
+    b.TextColor3 = ACCENT
+    b.Text = getKey().Name
+    b.Parent = r
+    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 6)
+
+    b.MouseButton1Click:Connect(function()
+        b.Text = "..."
+        local conn
+        conn = UIS.InputBegan:Connect(function(input, gp)
+            if gp then return end
+            local kc = input.KeyCode
+            if kc == Enum.KeyCode.Unknown then return end
+            if kc == Enum.KeyCode.Escape then
+                b.Text = getKey().Name
+                conn:Disconnect()
+                return
+            end
+            setKey(kc)
+            b.Text = kc.Name
+            conn:Disconnect()
+        end)
+        track(conn)
+    end)
+end
+
 local function button(text, cb, highlight)
     local r = Instance.new("Frame")
     r.Size = UDim2.new(1, -8, 0, 28)
@@ -1717,47 +1797,6 @@ local function gridBox(rows)
     g.CellSize = UDim2.new(0.25, -4, 0, 26)
     g.CellPadding = UDim2.new(0, 4, 0, 4)
     return f
-end
-
-local function textbox(placeholder, cb)
-    local r = Instance.new("Frame")
-    r.Size = UDim2.new(1, -8, 0, 30)
-    r.BackgroundColor3 = ROW
-    r.BorderSizePixel = 0
-    r.Parent = panel
-    Instance.new("UICorner", r).CornerRadius = UDim.new(0, 8)
-
-    local t = Instance.new("TextBox")
-    t.Size = UDim2.new(1, -16, 1, 0)
-    t.Position = UDim2.fromOffset(8, 0)
-    t.BackgroundTransparency = 1
-    t.Font = Enum.Font.GothamSemibold
-    t.TextSize = 12
-    t.TextColor3 = TEXT
-    t.PlaceholderText = placeholder
-    t.PlaceholderColor3 = SUB
-    t.TextXAlignment = Enum.TextXAlignment.Left
-    t.ClearTextOnFocus = false
-    t.Text = ""
-    t.Parent = r
-    t.FocusLost:Connect(function(enter)
-        if enter then task.spawn(function() pcall(cb, t.Text) end) end
-    end)
-    return t
-end
-
-local function statusLine()
-    local l = Instance.new("TextLabel")
-    l.Size = UDim2.new(1, -8, 0, 14)
-    l.BackgroundTransparency = 1
-    l.Font = Enum.Font.GothamMedium
-    l.TextSize = 10
-    l.TextColor3 = SUB
-    l.TextXAlignment = Enum.TextXAlignment.Left
-    l.Text = "  " .. skinLast
-    l.Parent = panel
-    table.insert(skinLabels, l)
-    return l
 end
 
 local function slider(text, min, max, default, cb, step, fmt)
@@ -1844,8 +1883,6 @@ local function setOpen(force)
         task.delay(0.16, function() if not open and panel then panel.Visible = false end end)
     end
 end
-
-local setHeadless, setKorblox, setForce, setBoost, setInf, setAura, setSpeed, setNoClip, setBoostVel
 
 local function setTab(id)
     activeTab = id
@@ -2014,12 +2051,6 @@ local function build()
     end)
 
     panel = pages.head
-    section("СКИН ИГРОКА")
-    local skinBox = textbox("ник игрока → Enter", function(t) copySkin(t) end)
-    button("Применить скин по нику", function() copySkin(skinBox.Text) end, true)
-    button("Мой скин обратно", function() removeSkin() end)
-    statusLine()
-
     section("АКСЕССУАРЫ")
     for _, a in ipairs(ACCS) do
         button(a.name, function() setAcc(a.id) end)
@@ -2047,6 +2078,7 @@ local function build()
             pcall(restoreSpeed, mine)
         end
     end)
+    bindRow("Бинд спидхака", function() return CONFIG.speedKey end, function(k) CONFIG.speedKey = k end)
     slider("Скорость", 8, 400, CONFIG.walkSpeed, function(v)
         CONFIG.walkSpeed = v
         if CONFIG.speedHack then pcall(applySpeed, LP.Character) end
@@ -2057,8 +2089,23 @@ local function build()
     section("КОЛЛИЗИИ")
     setNoClip = row("Ноклип", CONFIG.noclip, function(v)
         CONFIG.noclip = v
-        pcall(setNoClip, LP.Character, v)
+        local mine = LP.Character or myChar()
+        pcall(setNoClip, v and mine or nil, v)
     end)
+    section("ЛАЗАНЬЕ ПО СТЕНАМ")
+    setWall = row("Карабкаться", WALL.on, function(v)
+        WALL.on = v
+        if not v then
+            local char = LP.Character
+            local hum = char and char:FindFirstChildOfClass("Humanoid")
+            local root = hum and hum.RootPart
+            if root then pcall(function() root.AssemblyLinearVelocity = Vector3.zero end) end
+        end
+    end)
+    bindRow("Бинд карабканья", function() return WALL.key end, function(k) WALL.key = k end)
+    slider("Скорость лазанья", 15, 150, WALL.speed, function(v)
+        WALL.speed = v
+    end, 1)
     section("ПРЫЖОК")
     setInf = row("Бесконечный прыжок", CONFIG.infJump, function(v)
         CONFIG.infJump = v
@@ -2128,19 +2175,14 @@ local function build()
     section("ПРОЧЕЕ")
     button("Аксессуар заново", function()
         if accCurrent == 0 then accCurrent = ACCS[1].id end
-        pcall(clearAcc)
-        accAt = 0
-        task.spawn(function() pcall(applyAcc, accCurrent) end)
+        reAcc()
     end)
     button("Переприменить", function()
         CONFIG.headless, CONFIG.korblox, CONFIG.force = true, true, true
         if setHeadless then setHeadless(true) end
         if setKorblox then setKorblox(true) end
         if setForce then setForce(true) end
-        if accCurrent ~= 0 then
-            accAt = 0
-            task.spawn(function() pcall(applyAcc, accCurrent) end)
-        end
+        if accCurrent ~= 0 then reAcc() end
 
         refreshScan()
         syncFps()
@@ -2163,9 +2205,9 @@ local function build()
         print("[Venice] weld-режим:", tostring(weldMode), "попыток меша:", char and tostring(cmTries[char]) or "-")
         print("[Venice] CreateMeshPartAsync:", meshCache and "ок" or "недоступен")
         print("[Venice] аура:", tostring(AURA.on), "режим:", AURA.mode, "стиль:", AURA.style)
-        print("[Venice] аксессуар:", accCurrent, "| на голове:", tostring(hasAcc()), "| статус:", accLast)
-        print("[Venice] скин:", tostring(skinCurrent), "|", skinLast)
-        print("[Venice] спидхак:", tostring(CONFIG.speedHack), "скорость:", CONFIG.walkSpeed, "velocity:", tostring(CONFIG.speedBoost), "факт WS:", hum and hum.WalkSpeed or "-")
+        print("[Venice] аксессуар:", accCurrent, "| состояние:", accState, "| кэш:", accTemplate and "есть" or "нет", "| на голове:", tostring(hasAcc()), "| статус:", accLast)
+        print("[Venice] спидхак:", tostring(CONFIG.speedHack), "бинду:", CONFIG.speedKey.Name, "скорость:", CONFIG.walkSpeed, "velocity:", tostring(CONFIG.speedBoost), "факт WS:", hum and hum.WalkSpeed or "-")
+        print("[Venice] карабканье:", tostring(WALL.on), "бинду:", WALL.key.Name, "скорость:", WALL.speed)
         print("[Venice] ноклип:", tostring(CONFIG.noclip), "группа:", tostring(groupOk))
         print("[Venice] частей в папке:", partsFolder and #partsFolder:GetChildren() or 0)
         print("[Venice] fps:", tostring(FPS.boost), "частиц убито:", #killedParts, "эффектов:", #killedFx)
@@ -2177,8 +2219,10 @@ local function build()
         CONFIG.speedHack = false
         CONFIG.noclip = false
         AURA.on = false
+        WALL.on = false
         accCurrent = 0
-        skinCurrent = nil
+        accTemplate = nil
+        accState = "idle"
         FPS.boost, FPS.shadowsOff, FPS.fxOff, FPS.partsOff = false, false, false, false
         if setHeadless then setHeadless(false) end
         if setKorblox then setKorblox(false) end
@@ -2188,19 +2232,27 @@ local function build()
         if setAura then setAura(false) end
         if setSpeed then setSpeed(false) end
         if setNoClip then setNoClip(false) end
+        if setWall then setWall(false) end
         syncFps()
         for _, c in ipairs(targets()) do
             pcall(applyHeadless, c, false)
             pcall(clearKorblox, c)
             pcall(clearAura, c)
-            pcall(setNoClip, c, false)
             pcall(restoreSpeed, c)
         end
+        pcall(setNoClip, nil, false)
         pcall(clearAcc)
         pcall(applySky, "off")
         fovTarget = 70
         pcall(applyFov)
     end)
+
+    toggleSpeed = function()
+        if setSpeed then setSpeed(not CONFIG.speedHack) end
+    end
+    toggleWall = function()
+        if setWall then setWall(not WALL.on) end
+    end
 
     panel = shell
     setTab("look")
@@ -2232,7 +2284,7 @@ local function build()
         end
     end)
 
-    print("[Venice] v35 · Z меню")
+    print("[Venice] v36 · Z меню")
 end
 
 build()
@@ -2251,9 +2303,12 @@ end)
 
 track(UIS.InputBegan:Connect(function(input, gp)
     if gp then return end
-    if input.KeyCode ~= Enum.KeyCode.Z then return end
     if UIS:GetFocusedTextBox() then return end
-    setOpen()
+    local kc = input.KeyCode
+    if kc == Enum.KeyCode.Unknown then return end
+    if kc == Enum.KeyCode.Z then setOpen() return end
+    if toggleSpeed and kc == CONFIG.speedKey then toggleSpeed() return end
+    if toggleWall and kc == WALL.key then toggleWall() return end
 end))
 
 pcall(getFolder)
