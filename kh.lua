@@ -12,7 +12,6 @@ local Lighting = ref(game:GetService("Lighting"))
 local AssetS   = ref(game:GetService("AssetService"))
 local RunS     = ref(game:GetService("RunService"))
 local CAS      = ref(game:GetService("ContextActionService"))
-local Physics  = ref(game:GetService("PhysicsService"))
 local WS       = ref(workspace)
 local LP       = Players.LocalPlayer
 while not LP do task.wait() end
@@ -22,18 +21,11 @@ local function track(c) table.insert(getgenv().VeniceCosConns, c) return c end
 local CONFIG = {
     korblox = true, headless = true, force = true,
     infJump = false, jumpLimit = -1,
-    speedHack = false, walkSpeed = 60, speedBoost = true, noclip = false,
-    speedKey = Enum.KeyCode.G,
-    speedMode = "both", smooth = true, rampRate = 140,
+    noclip = false,
 }
 local FPS = { boost = false, shadowsOff = false, fxOff = false, partsOff = false, cap = 240 }
 local AURA = { on = false, size = 1, speed = 1, hue = 0, mode = "rainbow", color = Color3.fromRGB(152, 132, 255), style = "both" }
-local WALL = { on = false, speed = 35, reach = 3.5, key = Enum.KeyCode.H, attached = false }
 local PROTECT = { parts = true, godHealth = true }
-local BHOP = {
-    on = false, autoJump = true, accel = 90, groundAccel = 12,
-    airWish = 32, maxSpeed = 400, key = Enum.KeyCode.B, lastJump = 0,
-}
 
 local ACCS = {
     { id = 132809431,  name = "Doomsekkar" },
@@ -622,167 +614,10 @@ local function inputDir()
     return Vector3.zero
 end
 
--- ============================== мотор ==============================
+-- ============================== ноклип ==============================
 
-local motor, motorAtt, motorPart = nil, nil, nil
-
-local function releaseMotor()
-    if motor then pcall(function() motor:Destroy() end) end
-    if motorAtt then pcall(function() motorAtt:Destroy() end) end
-    motor, motorAtt, motorPart = nil, nil, nil
-end
-
-local function dropMotor()
-    if CONFIG.speedHack or BHOP.on then return end
-    releaseMotor()
-end
-
-local function ensureMotor(root)
-    if motor and motor.Parent and motorPart == root then return motor end
-    releaseMotor()
-    local att = Instance.new("Attachment")
-    att.Name = "VeniceMotorAtt"
-    att.Parent = root
-    local lv = Instance.new("LinearVelocity")
-    lv.Name = "VeniceMotor"
-    lv.Attachment0 = att
-    lv.RelativeTo = Enum.ActuatorRelativeTo.World
-    lv.ApplyAtCenterOfMass = true
-    lv.ForceLimitMode = Enum.ForceLimitMode.PerAxis
-    lv.MaxAxesForce = Vector3.new(1e6, 0, 1e6)
-    lv.VectorVelocity = Vector3.zero
-    lv.Parent = root
-    motor, motorAtt, motorPart = lv, att, root
-    return lv
-end
-
-local function driveMotor(root, vec, withY)
-    local lv = ensureMotor(root)
-    lv.MaxAxesForce = withY and Vector3.new(1e6, 1e6, 1e6) or Vector3.new(1e6, 0, 1e6)
-    lv.VectorVelocity = vec
-end
-
--- ============================== спидхак / ноклип ==============================
-
-local WS_ATTR  = "VeniceOrigSpeed"
-local COL_ATTR = "VeniceOrigCol"
-local speedWriting = false
-local speedCur = 0
-local groupOk = false
-local GROUP = "VeniceNoClip"
-local noclipTouched = setmetatable({}, { __mode = "k" })
-local wantVel = nil
-
-local function ensureGroup()
-    if groupOk then return true end
-    local ok = pcall(function()
-        if not Physics:IsCollisionGroupRegistered(GROUP) then
-            Physics:RegisterCollisionGroup(GROUP)
-        end
-        Physics:CollisionGroupSetCollidable(GROUP, "Default", false)
-    end)
-    groupOk = ok
-    return ok
-end
-
-local function speedTarget(dt)
-    if not CONFIG.speedHack then
-        speedCur = 0
-        return 0
-    end
-    local target = CONFIG.walkSpeed
-    if CONFIG.smooth then
-        speedCur = math.min(target, speedCur + (CONFIG.rampRate or 140) * (dt or 0))
-        if speedCur < 10 then speedCur = math.min(target, 10) end
-    else
-        speedCur = target
-    end
-    return speedCur
-end
-
-local function applySpeed(char)
-    if not CONFIG.speedHack then return end
-    local hum = char and char:FindFirstChildOfClass("Humanoid")
-    if not hum or hum.Health <= 0 then return end
-    if speedWriting then return end
-    local want = math.max(speedCur, 8)
-    if hum.WalkSpeed ~= want then
-        speedWriting = true
-        if hum:GetAttribute(WS_ATTR) == nil then
-            pcall(function() hum:SetAttribute(WS_ATTR, hum.WalkSpeed) end)
-        end
-        pcall(function() hum.WalkSpeed = want end)
-        speedWriting = false
-    end
-end
-
-local function pushVelocity(char, dt)
-    wantVel = nil
-    if not CONFIG.speedHack then return end
-    local hum = char and char:FindFirstChildOfClass("Humanoid")
-    local root = hum and hum.RootPart
-    if not root or hum.Health <= 0 then return end
-
-    local spd = speedTarget(dt)
-    if spd <= 0 then return end
-    if CONFIG.speedMode == "ws" then return end
-
-    local dir = inputDir()
-    if dir.Magnitude < 0.05 then
-        dir = hum.MoveDirection
-        dir = Vector3.new(dir.X, 0, dir.Z)
-        if dir.Magnitude < 0.05 then
-            dropMotor()
-            return
-        end
-        dir = dir.Unit
-    end
-
-    local want = dir * spd
-    wantVel = want
-    driveMotor(root, Vector3.new(want.X, 0, want.Z), false)
-
-    local v = root.AssemblyLinearVelocity
-    local cur = Vector3.new(v.X, 0, v.Z)
-    if cur.Magnitude < want.Magnitude then
-        root.AssemblyLinearVelocity = Vector3.new(want.X, v.Y, want.Z)
-    end
-end
-
-local function restoreSpeed(char)
-    local hum = char and char:FindFirstChildOfClass("Humanoid")
-    if not hum then return end
-    local o = hum:GetAttribute(WS_ATTR)
-    if o ~= nil then
-        speedWriting = true
-        pcall(function() hum.WalkSpeed = o end)
-        speedWriting = false
-        pcall(function() hum:SetAttribute(WS_ATTR, nil) end)
-    end
-end
-
-local function noClipPart(d, on)
-    if on then
-        if d:GetAttribute(COL_ATTR) == nil then
-            pcall(function() d:SetAttribute(COL_ATTR, d.CanCollide) end)
-        end
-        if d.CanCollide then pcall(function() d.CanCollide = false end) end
-        if groupOk and d.CollisionGroup ~= GROUP then
-            pcall(function() d.CollisionGroup = GROUP end)
-        end
-        noclipTouched[d] = true
-    else
-        local o = d:GetAttribute(COL_ATTR)
-        if o ~= nil then
-            pcall(function() d.CanCollide = o end)
-            pcall(function() d:SetAttribute(COL_ATTR, nil) end)
-        end
-        if d.CollisionGroup == GROUP then
-            pcall(function() d.CollisionGroup = "Default" end)
-        end
-        noclipTouched[d] = nil
-    end
-end
+local noclipSaved = {}
+local noclipLock = false
 
 local function unstick(char)
     local hum = char:FindFirstChildOfClass("Humanoid")
@@ -799,43 +634,56 @@ local function unstick(char)
     end
 end
 
-local function setNoClip(char, on)
+local function noclipOne(d, on)
+    if not d:IsA("BasePart") then return end
     if on then
-        if not char then return end
-        ensureGroup()
-        for _, d in ipairs(char:GetDescendants()) do
-            if d:IsA("BasePart") then noClipPart(d, true) end
-        end
-        return
-    end
-
-    for d in pairs(noclipTouched) do
-        if d.Parent then noClipPart(d, false) end
-        noclipTouched[d] = nil
-    end
-
-    local list, seen = {}, {}
-    local mine = LP.Character or myChar()
-    if mine then
-        seen[mine] = true
-        table.insert(list, mine)
-    end
-    for _, c in ipairs(targets()) do
-        if not seen[c] then
-            seen[c] = true
-            table.insert(list, c)
-        end
-    end
-
-    for _, c in ipairs(list) do
-        for _, d in ipairs(c:GetDescendants()) do
-            if d:IsA("BasePart") and d:GetAttribute(COL_ATTR) ~= nil then
-                noClipPart(d, false)
-            end
-        end
-        pcall(unstick, c)
+        if noclipSaved[d] == nil then noclipSaved[d] = d.CanCollide end
+        if d.CanCollide then pcall(function() d.CanCollide = false end) end
+    else
+        local o = noclipSaved[d]
+        noclipSaved[d] = nil
+        if o ~= nil then pcall(function() d.CanCollide = o end) end
     end
 end
+
+local function restoreNoclip()
+    for d, o in pairs(noclipSaved) do
+        if d.Parent then pcall(function() d.CanCollide = o end) end
+        noclipSaved[d] = nil
+    end
+    table.clear(noclipSaved)
+end
+
+local function setNoClip(char, on)
+    if on then
+        if noclipLock then return end
+        noclipLock = true
+        if char then
+            for _, d in ipairs(char:GetDescendants()) do
+                if d:IsA("BasePart") then noclipOne(d, true) end
+            end
+        end
+        noclipLock = false
+        return
+    end
+    restoreNoclip()
+    local mine = LP.Character or myChar()
+    if mine then pcall(unstick, mine) end
+end
+
+task.spawn(function()
+    while true do
+        task.wait(0.1)
+        if CONFIG.noclip then
+            local c = LP.Character
+            if c and not noclipLock then
+                for _, d in ipairs(c:GetDescendants()) do
+                    if d:IsA("BasePart") and d.CanCollide then noclipOne(d, true) end
+                end
+            end
+        end
+    end
+end)
 
 -- ============================== защита от урона и чекпоинтов ==============================
 
@@ -912,149 +760,19 @@ track(WS.DescendantAdded:Connect(function(d)
     if d:IsA("BasePart") and isHazName(d.Name) then pcall(protectPart, d, true) end
 end))
 
--- ============================== прилипание к стене ==============================
-
-local function wallRay(char, root, dir, dist)
-    local params = RaycastParams.new()
-    params.FilterType = Enum.RaycastFilterType.Exclude
-    params.FilterDescendantsInstances = { char }
-    return WS:Raycast(root.Position, dir * dist, params)
-end
-
-local function wallDetach(hum, root)
-    if not WALL.attached then return end
-    WALL.attached = false
-    dropMotor()
-    if hum then pcall(function() hum:SetStateEnabled(Enum.HumanoidStateType.Climbing, true) end) end
-    if root then pcall(function() root.AssemblyLinearVelocity = Vector3.new(0, 0, 0) end) end
-end
-
-local function wallStick(char)
-    if not WALL.on then return end
-    local hum = char and char:FindFirstChildOfClass("Humanoid")
-    local root = hum and hum.RootPart
-    if not root or hum.Health <= 0 or hum.SeatPart then
-        wallDetach(hum, root)
-        return
-    end
-
-    local cam = WS.CurrentCamera
-    local move = inputDir()
-    local look = cam and cam.CFrame.LookVector or root.CFrame.LookVector
-    look = Vector3.new(look.X, 0, look.Z)
-    if look.Magnitude < 0.01 then look = Vector3.new(0, 0, -1) end
-    look = look.Unit
-
-    if WALL.attached then
-        if UIS:IsKeyDown(Enum.KeyCode.Space) then
-            wallDetach(hum, root)
-            return
-        end
-        local hit = wallRay(char, root, look, WALL.reach)
-        if not hit then
-            wallDetach(hum, root)
-            return
-        end
-        local n = Vector3.new(hit.Normal.X, 0, hit.Normal.Z)
-        if n.Magnitude < 0.01 then
-            wallDetach(hum, root)
-            return
-        end
-        n = n.Unit
-        local tangent = n:Cross(Vector3.new(0, 1, 0))
-        if tangent.Magnitude < 0.01 then
-            wallDetach(hum, root)
-            return
-        end
-        tangent = tangent.Unit
-
-        local side = 0
-        if move.Magnitude > 0.05 then side = move:Dot(tangent) end
-
-        local vel = tangent * (side * WALL.speed) - n * 3
-        driveMotor(root, Vector3.new(vel.X, 0, vel.Z), true)
-        root.AssemblyLinearVelocity = Vector3.new(vel.X, 0, vel.Z)
-        return
-    end
-
-    local onFloor = hum.FloorMaterial ~= Enum.Material.Air
-    if onFloor and move.Magnitude < 0.1 then return end
-
-    local hit = wallRay(char, root, look, WALL.reach)
-    if not hit then return end
-    local n = Vector3.new(hit.Normal.X, 0, hit.Normal.Z)
-    if n.Magnitude < 0.01 then return end
-    n = n.Unit
-
-    WALL.attached = true
-    pcall(function() hum:SetStateEnabled(Enum.HumanoidStateType.Climbing, false) end)
-    driveMotor(root, Vector3.new(-n.X * 3, 0, -n.Z * 3), true)
-end
-
--- ============================== тики движения ==============================
-
-local moveBound = false
-pcall(function()
-    RunS:BindToRenderStep("VeniceMove", Enum.RenderPriority.Last.Value + 1, function(dt)
-        local char = LP.Character
-        if not char then
-            if motor then releaseMotor() end
-            return
-        end
-        if CONFIG.speedHack then
-            pcall(applySpeed, char)
-            pcall(pushVelocity, char, dt)
-        else
-            speedCur = 0
-        end
-        if WALL.on then pcall(wallStick, char) end
-        if not CONFIG.speedHack and not WALL.attached and not BHOP.on and motor then releaseMotor() end
-        if CONFIG.noclip then pcall(setNoClip, char, true) end
-    end)
-    moveBound = true
-end)
-
-if not moveBound then
-    track(RunS.RenderStepped:Connect(function(dt)
-        local char = LP.Character
-        if not char then return end
-        if CONFIG.speedHack then
-            pcall(applySpeed, char)
-            pcall(pushVelocity, char, dt)
-        end
-        if WALL.on then pcall(wallStick, char) end
-        if CONFIG.noclip then pcall(setNoClip, char, true) end
-    end))
-end
-
--- добиваем откат уже после физики
-track(RunS.Heartbeat:Connect(function()
-    if WALL.attached then return end
-    if not wantVel then return end
-    local char = LP.Character
-    local hum = char and char:FindFirstChildOfClass("Humanoid")
-    local root = hum and hum.RootPart
-    if not root then return end
-    local v = root.AssemblyLinearVelocity
-    local cur = Vector3.new(v.X, 0, v.Z)
-    if cur.Magnitude < wantVel.Magnitude * 0.85 then
-        root.AssemblyLinearVelocity = Vector3.new(wantVel.X, v.Y, wantVel.Z)
-    end
-end))
-
 -- ============================== аура ==============================
 
-local auraState = setmetatable({}, { __mode = "k" })
+local auraChar = nil
+local auraParts = nil
 
 local function rainbow(h) return Color3.fromHSV(h % 1, 1, 1) end
 
 local function rainbowSeq(phase)
-    local kp = {}
-    for i = 0, 6 do
-        local t = i / 6
-        table.insert(kp, ColorSequenceKeypoint.new(t, rainbow(phase + t)))
-    end
-    return ColorSequence.new(kp)
+    return ColorSequence.new({
+        ColorSequenceKeypoint.new(0, rainbow(phase)),
+        ColorSequenceKeypoint.new(0.5, rainbow(phase + 0.33)),
+        ColorSequenceKeypoint.new(1, rainbow(phase + 0.66)),
+    })
 end
 
 local function auraColor(off)
@@ -1062,8 +780,8 @@ local function auraColor(off)
     return AURA.color
 end
 
-local function auraSeq(off)
-    if AURA.mode == "rainbow" then return rainbowSeq(AURA.hue + (off or 0)) end
+local function auraSeq()
+    if AURA.mode == "rainbow" then return rainbowSeq(AURA.hue) end
     return ColorSequence.new(AURA.color)
 end
 
@@ -1071,58 +789,37 @@ local AURA_COLORS = {
     { name = "Радуга",  mode = "rainbow" },
     { name = "Фиолет",  color = Color3.fromRGB(152, 132, 255) },
     { name = "Красный", color = Color3.fromRGB(255, 60, 60) },
-    { name = "Оранж",   color = Color3.fromRGB(255, 140, 40) },
     { name = "Золото",  color = Color3.fromRGB(255, 205, 60) },
     { name = "Лайм",    color = Color3.fromRGB(160, 255, 60) },
-    { name = "Матрица", color = Color3.fromRGB(40, 255, 80) },
     { name = "Циан",    color = Color3.fromRGB(70, 230, 255) },
-    { name = "Синий",   color = Color3.fromRGB(70, 130, 255) },
     { name = "Розовый", color = Color3.fromRGB(255, 110, 210) },
     { name = "Белый",   color = Color3.fromRGB(255, 255, 255) },
-    { name = "Кровь",   color = Color3.fromRGB(170, 20, 20) },
-    { name = "Лёд",     color = Color3.fromRGB(170, 225, 255) },
-    { name = "Пустота", color = Color3.fromRGB(90, 40, 160) },
-    { name = "Огонь",   color = Color3.fromRGB(255, 90, 20) },
-    { name = "Токсик",  color = Color3.fromRGB(180, 255, 40) },
 }
 
 local AURA_STYLES = {
     { name = "Кольцо", id = "ring" },
     { name = "Туман",  id = "mist" },
-    { name = "Оба",    id = "both" },
-    { name = "Вихрь",  id = "vortex" },
 }
 
-local SPEED_MODES = {
-    { name = "Оба",       id = "both" },
-    { name = "Velocity",  id = "vel" },
-    { name = "WalkSpeed", id = "ws" },
-}
-
-local function clearAura(char)
-    local s = auraState[char]
-    if not s then return end
-    auraState[char] = nil
-    for _, o in ipairs(s) do pcall(function() o:Destroy() end) end
+local function clearAura()
+    if auraParts then
+        for _, o in ipairs(auraParts) do pcall(function() o:Destroy() end) end
+    end
+    auraChar, auraParts = nil, nil
 end
 
-local function clearAuraAll()
-    for c in pairs(auraState) do clearAura(c) end
-end
-
-local function makeRing(att, made, inward)
+local function makeRing(att, made)
     local e = Instance.new("ParticleEmitter")
-    e.Name = inward and "VeniceAuraRingIn" or "VeniceAuraRing"
+    e.Name = "VeniceAuraRing"
     e.Texture = "rbxasset://textures/particles/sparkles_main.dds"
     e.Shape = Enum.ParticleEmitterShape.Disc
     e.ShapeStyle = Enum.ParticleEmitterShapeStyle.Surface
-    e.ShapeInOut = inward and Enum.ParticleEmitterShapeInOut.Inward or Enum.ParticleEmitterShapeInOut.Outward
     e.ShapePartial = 1
-    e.Rate = (inward and 26 or 40) * AURA.size
+    e.Rate = 20 * AURA.size
     e.Lifetime = NumberRange.new(0.6, 1.1)
     e.Speed = NumberRange.new(0.6, 2.2)
     e.Drag = 3
-    e.Acceleration = Vector3.new(0, inward and 1.2 or 2.6, 0)
+    e.Acceleration = Vector3.new(0, 2.6, 0)
     e.Size = NumberSequence.new({
         NumberSequenceKeypoint.new(0, 0.5 * AURA.size),
         NumberSequenceKeypoint.new(0.35, 0.85 * AURA.size),
@@ -1134,8 +831,8 @@ local function makeRing(att, made, inward)
     })
     e.LightEmission = 1
     e.LightInfluence = 0
-    e.RotSpeed = NumberRange.new(inward and 120 or -120, inward and 240 or 120)
-    e.Color = auraSeq(inward and 0.2 or 0)
+    e.RotSpeed = NumberRange.new(-120, 120)
+    e.Color = auraSeq()
     e:SetAttribute("VeniceAura", true)
     e.Parent = att
     table.insert(made, e)
@@ -1147,7 +844,7 @@ local function makeMist(att, made)
     e.Texture = "rbxasset://textures/particles/sparkles_main.dds"
     e.Shape = Enum.ParticleEmitterShape.Sphere
     e.ShapeStyle = Enum.ParticleEmitterShapeStyle.Volume
-    e.Rate = 12 * AURA.size
+    e.Rate = 8 * AURA.size
     e.Lifetime = NumberRange.new(1, 1.8)
     e.Speed = NumberRange.new(0.2, 0.9)
     e.Drag = 4
@@ -1162,19 +859,19 @@ local function makeMist(att, made)
     })
     e.LightEmission = 1
     e.LightInfluence = 0
-    e.Color = auraSeq(0.3)
+    e.Color = auraSeq()
     e:SetAttribute("VeniceAura", true)
     e.Parent = att
     table.insert(made, e)
 end
 
 local function applyAura(char, on)
-    if not char then return end
-    if not on then clearAura(char) return end
-    if auraState[char] then return end
+    if not on then clearAura() return end
+    if not char or auraChar == char then return end
+    clearAura()
 
     local hum = char:FindFirstChildOfClass("Humanoid")
-    local root = (hum and hum.RootPart) or char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso") or char.PrimaryPart
+    local root = (hum and hum.RootPart) or char:FindFirstChild("HumanoidRootPart") or char.PrimaryPart
     if not root then return end
 
     local made = {}
@@ -1185,23 +882,16 @@ local function applyAura(char, on)
         att.Parent = root
         table.insert(made, att)
 
-        local st = AURA.style
-        if st == "ring" then
-            makeRing(att, made, false)
-        elseif st == "mist" then
+        if AURA.style == "mist" then
             makeMist(att, made)
-        elseif st == "vortex" then
-            makeRing(att, made, false)
-            makeRing(att, made, true)
         else
-            makeRing(att, made, false)
-            makeMist(att, made)
+            makeRing(att, made)
         end
 
         local light = Instance.new("PointLight")
         light.Name = "VeniceAuraLight"
         light.Brightness = 2
-        light.Range = 13
+        light.Range = 12
         light.Color = auraColor()
         light.Parent = att
         table.insert(made, light)
@@ -1219,45 +909,42 @@ local function applyAura(char, on)
     end)
 
     if ok then
-        auraState[char] = made
+        auraChar = char
+        auraParts = made
     else
         for _, o in ipairs(made) do pcall(function() o:Destroy() end) end
     end
 end
 
 local function refreshAura()
-    local list = targets()
-    for _, c in ipairs(list) do pcall(clearAura, c) end
+    clearAura()
     if AURA.on then
-        for _, c in ipairs(list) do pcall(applyAura, c, true) end
+        local c = myChar()
+        if c then pcall(applyAura, c, true) end
     end
 end
 
 task.spawn(function()
-    local step = 0
+    local last = os.clock()
     while true do
-        local dt = task.wait()
-        if AURA.on then
-            if AURA.mode == "rainbow" then AURA.hue = (AURA.hue + dt * 0.22 * AURA.speed) % 1 end
-            step = step + dt
-            local rebuild = step > 0.07
-            if rebuild then step = 0 end
-            for char, s in pairs(auraState) do
-                if not char.Parent then
-                    clearAura(char)
-                else
-                    local c = auraColor()
-                    for _, o in ipairs(s) do
-                        if o:IsA("Highlight") then
-                            o.FillColor = c
-                            o.OutlineColor = auraColor(0.5)
-                        elseif o:IsA("PointLight") then
-                            o.Color = c
-                        elseif o:IsA("ParticleEmitter") and rebuild then
-                            local ph = (o.Name == "VeniceAuraMist") and 0.3 or 0
-                            if o.Name == "VeniceAuraRingIn" then ph = 0.2 end
-                            o.Color = auraSeq(ph)
-                        end
+        task.wait(0.08)
+        local now = os.clock()
+        local dt = now - last
+        last = now
+        if auraChar and not auraChar.Parent then clearAura() end
+        if AURA.on and auraChar and auraParts then
+            if AURA.mode == "rainbow" then
+                AURA.hue = (AURA.hue + dt * 0.22 * AURA.speed) % 1
+                local c = rainbow(AURA.hue)
+                local seq = rainbowSeq(AURA.hue)
+                for _, o in ipairs(auraParts) do
+                    if o:IsA("Highlight") then
+                        o.FillColor = c
+                        o.OutlineColor = rainbow(AURA.hue + 0.5)
+                    elseif o:IsA("PointLight") then
+                        o.Color = c
+                    elseif o:IsA("ParticleEmitter") then
+                        o.Color = seq
                     end
                 end
             end
@@ -1353,68 +1040,6 @@ track(RunS.Stepped:Connect(function()
         airJumps = 0
         if CONFIG.jumpLimit == 0 and holdingJump() then pcall(infJump, true) end
     end
-end))
-
--- ============================== бхоп / стрейф-ускорение ==============================
-
-local function bhopStep(char, dt)
-    if not BHOP.on then return end
-    local hum = char and char:FindFirstChildOfClass("Humanoid")
-    local root = hum and hum.RootPart
-    if not root or hum.Health <= 0 or hum.SeatPart then return end
-    if WALL.attached then return end
-
-    local grounded = hum.FloorMaterial ~= Enum.Material.Air
-
-    if grounded and BHOP.autoJump and holdingJump() then
-        local now = os.clock()
-        if now - BHOP.lastJump > 0.08 and now - lastJump > 0.08 then
-            BHOP.lastJump = now
-            local v0 = root.AssemblyLinearVelocity
-            pcall(function() hum:ChangeState(Enum.HumanoidStateType.Jumping) end)
-            local jp = hum.JumpPower
-            if not hum.UseJumpPower then jp = math.sqrt(2 * WS.Gravity * hum.JumpHeight) end
-            root.AssemblyLinearVelocity = Vector3.new(v0.X, jp or 50, v0.Z)
-            grounded = false
-        end
-    end
-
-    local wish = inputDir()
-    local v = root.AssemblyLinearVelocity
-    local cur = Vector3.new(v.X, 0, v.Z)
-
-    if wish.Magnitude < 0.05 then
-        if not grounded then
-            driveMotor(root, Vector3.new(cur.X, 0, cur.Z), false)
-        elseif motor and not CONFIG.speedHack then
-            releaseMotor()
-        end
-        return
-    end
-
-    local accel = grounded and BHOP.groundAccel or BHOP.accel
-    local wishSpeed = grounded and math.max(cur.Magnitude, BHOP.airWish) or BHOP.airWish
-
-    local add = wishSpeed - cur:Dot(wish)
-    if add > 0 then
-        local step = accel * dt * wishSpeed
-        if step > add then step = add end
-        cur = cur + wish * step
-    end
-
-    if cur.Magnitude > BHOP.maxSpeed then
-        cur = cur.Unit * BHOP.maxSpeed
-    end
-
-    root.AssemblyLinearVelocity = Vector3.new(cur.X, v.Y, cur.Z)
-    driveMotor(root, Vector3.new(cur.X, 0, cur.Z), false)
-end
-
-track(RunS.Stepped:Connect(function(dt)
-    if not BHOP.on then return end
-    local char = LP.Character
-    if not char then return end
-    pcall(bhopStep, char, dt)
 end))
 
 -- ============================== небо ==============================
@@ -1726,14 +1351,10 @@ local function enforce()
             end
             pcall(applyKorblox, char, true)
         end
-        if AURA.on then pcall(applyAura, char, true) end
     end
 
     local mine = LP.Character or myChar()
-    if mine then
-        if CONFIG.speedHack then pcall(applySpeed, mine) end
-        if CONFIG.noclip then pcall(setNoClip, mine, true) end
-    end
+    if mine and AURA.on then pcall(applyAura, mine, true) end
 
     pcall(cleanupParts, list)
 
@@ -1788,7 +1409,6 @@ local function watchChar(char)
     airJumps = 0
     accMountAt = 0
     accState = accTemplate and "ready" or "idle"
-    WALL.attached = false
 
     enforce()
     for _, d in ipairs({ 0.2, 0.5, 0.9, 1.4, 2.2, 3.2 }) do
@@ -1807,7 +1427,7 @@ local function watchChar(char)
         if d:IsA("BasePart") or d:IsA("Accessory") or d:IsA("Hat") or d:IsA("Decal") or d:IsA("CharacterMesh") then
             if d:IsA("BasePart") then
                 hookPart(d)
-                if CONFIG.noclip then pcall(noClipPart, d, true) end
+                if CONFIG.noclip then pcall(noclipOne, d, true) end
             end
             task.defer(enforce)
         end
@@ -1836,12 +1456,6 @@ local function watchChar(char)
     if hum then
         track(hum.ChildAdded:Connect(function() task.defer(enforce) end))
         track(hum:GetPropertyChangedSignal("RigType"):Connect(function() task.defer(enforce) end))
-        track(hum:GetPropertyChangedSignal("WalkSpeed"):Connect(function()
-            if speedWriting or not CONFIG.speedHack then return end
-            if hum.WalkSpeed ~= math.max(speedCur, 8) then
-                task.defer(function() pcall(applySpeed, char) end)
-            end
-        end))
         track(hum:GetPropertyChangedSignal("Health"):Connect(function()
             if not PROTECT.godHealth or healthGuard then return end
             if hum.Health < hum.MaxHealth then
@@ -1892,8 +1506,7 @@ end))
 
 local gui, panel, open = nil, nil, false
 local pages, tabBtns, activeTab = {}, {}, nil
-local setHeadless, setKorblox, setForce, setBoost, setInf, setAura, setSpeed, setNoClip, setBoostVel, setWall, setBhop
-local toggleSpeed, toggleWall, toggleBhop
+local setHeadless, setKorblox, setForce, setBoost, setInf, setAura, setNoClip
 
 local function tw(o, t, p) TweenS:Create(o, TweenInfo.new(t), p):Play() end
 
@@ -1966,58 +1579,6 @@ local function row(text, default, cb, h)
         paint(v)
         task.spawn(function() pcall(cb, v) end)
     end
-end
-
-local function bindRow(text, getKey, setKey)
-    local r = Instance.new("Frame")
-    r.Size = UDim2.new(1, -8, 0, 28)
-    r.BackgroundColor3 = ROW
-    r.BorderSizePixel = 0
-    r.Parent = panel
-    Instance.new("UICorner", r).CornerRadius = UDim.new(0, 8)
-
-    local l = Instance.new("TextLabel")
-    l.Size = UDim2.new(1, -70, 1, 0)
-    l.Position = UDim2.fromOffset(10, 0)
-    l.BackgroundTransparency = 1
-    l.Font = Enum.Font.GothamSemibold
-    l.TextSize = 11
-    l.TextColor3 = TEXT
-    l.TextXAlignment = Enum.TextXAlignment.Left
-    l.Text = text
-    l.Parent = r
-
-    local b = Instance.new("TextButton")
-    b.Size = UDim2.fromOffset(54, 18)
-    b.Position = UDim2.new(1, -62, 0.5, -9)
-    b.BackgroundColor3 = OFF
-    b.BorderSizePixel = 0
-    b.AutoButtonColor = false
-    b.Font = Enum.Font.GothamBold
-    b.TextSize = 10
-    b.TextColor3 = ACCENT
-    b.Text = getKey().Name
-    b.Parent = r
-    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 6)
-
-    b.MouseButton1Click:Connect(function()
-        b.Text = "..."
-        local conn
-        conn = UIS.InputBegan:Connect(function(input, gp)
-            if gp then return end
-            local kc = input.KeyCode
-            if kc == Enum.KeyCode.Unknown then return end
-            if kc == Enum.KeyCode.Escape then
-                b.Text = getKey().Name
-                conn:Disconnect()
-                return
-            end
-            setKey(kc)
-            b.Text = kc.Name
-            conn:Disconnect()
-        end)
-        track(conn)
-    end)
 end
 
 local function button(text, cb, highlight)
@@ -2302,7 +1863,7 @@ local function build()
 
     panel = pages.aura
     section("ЦВЕТ")
-    local cg = gridBox(4)
+    local cg = gridBox(2)
     for _, c in ipairs(AURA_COLORS) do
         chip(cg, c.name, function()
             if c.mode == "rainbow" then
@@ -2326,9 +1887,10 @@ local function build()
     setAura = row("Аура вкл", AURA.on, function(v)
         AURA.on = v
         if v then
-            for _, c in ipairs(targets()) do pcall(applyAura, c, true) end
+            local c = myChar()
+            if c then pcall(applyAura, c, true) end
         else
-            clearAuraAll()
+            clearAura()
         end
     end)
     slider("Размер", 0.3, 2.5, AURA.size, function(v)
@@ -2359,111 +1921,7 @@ local function build()
         enforce()
     end)
 
-    -- ===== движение с под-вкладками =====
-    local movePage = pages.move
-    local subBar = Instance.new("Frame")
-    subBar.Size = UDim2.new(1, -8, 0, 22)
-    subBar.BackgroundTransparency = 1
-    subBar.Parent = movePage
-    local sb = Instance.new("UIListLayout", subBar)
-    sb.FillDirection = Enum.FillDirection.Horizontal
-    sb.Padding = UDim.new(0, 3)
-
-    local subPages, subBtns = {}, {}
-    local function showSub(id)
-        for k, f in pairs(subPages) do f.Visible = (k == id) end
-        for k, b in pairs(subBtns) do
-            b.BackgroundColor3 = (k == id) and ACCENT or ROW
-            b.TextColor3 = (k == id) and BG or SUB
-        end
-    end
-    local SUBS = {
-        { id = "spd",  label = "Скорость" },
-        { id = "jmp",  label = "Прыжок" },
-        { id = "wall", label = "Стена" },
-    }
-    for _, s in ipairs(SUBS) do
-        local b = Instance.new("TextButton")
-        b.Size = UDim2.fromOffset(72, 20)
-        b.BackgroundColor3 = ROW
-        b.BorderSizePixel = 0
-        b.AutoButtonColor = false
-        b.Font = Enum.Font.GothamBold
-        b.TextSize = 9
-        b.TextColor3 = SUB
-        b.Text = s.label
-        b.Parent = subBar
-        Instance.new("UICorner", b).CornerRadius = UDim.new(0, 6)
-        subBtns[s.id] = b
-        b.MouseButton1Click:Connect(function() showSub(s.id) end)
-
-        local f = Instance.new("Frame")
-        f.Size = UDim2.new(1, -8, 0, 0)
-        f.AutomaticSize = Enum.AutomaticSize.Y
-        f.BackgroundTransparency = 1
-        f.Visible = false
-        f.Parent = movePage
-        local fl = Instance.new("UIListLayout", f)
-        fl.Padding = UDim.new(0, 5)
-        subPages[s.id] = f
-    end
-    showSub("spd")
-
-    panel = subPages.spd
-    section("СКОРОСТЬ")
-    setSpeed = row("Спидхак", CONFIG.speedHack, function(v)
-        CONFIG.speedHack = v
-        speedCur = 0
-        wantVel = nil
-        local mine = LP.Character
-        if v then
-            pcall(applySpeed, mine)
-        else
-            releaseMotor()
-            pcall(restoreSpeed, mine)
-        end
-    end)
-    bindRow("Бинд спидхака", function() return CONFIG.speedKey end, function(k) CONFIG.speedKey = k end)
-    local mg = gridBox(1)
-    for _, m in ipairs(SPEED_MODES) do
-        chip(mg, m.name, function() CONFIG.speedMode = m.id end)
-    end
-    row("Плавный разгон", CONFIG.smooth, function(v)
-        CONFIG.smooth = v
-        speedCur = 0
-    end, 26)
-    slider("Скорость", 8, 400, CONFIG.walkSpeed, function(v)
-        CONFIG.walkSpeed = v
-        if CONFIG.speedHack then pcall(applySpeed, LP.Character) end
-    end, 1)
-    setBoostVel = row("Пробивать клэмпы (velocity)", CONFIG.speedBoost, function(v)
-        CONFIG.speedBoost = v
-    end, 26)
-
-    section("БХОП / СТРЕЙФ")
-    setBhop = row("Бхоп и набор скорости", BHOP.on, function(v)
-        BHOP.on = v
-        BHOP.lastJump = 0
-        if not v and not CONFIG.speedHack then releaseMotor() end
-    end)
-    bindRow("Бинд бхопа", function() return BHOP.key end, function(k) BHOP.key = k end)
-    row("Авто-прыжок", BHOP.autoJump, function(v)
-        BHOP.autoJump = v
-    end, 26)
-    slider("Сила стрейф-ускорения", 10, 300, BHOP.accel, function(v)
-        BHOP.accel = v
-    end, 5)
-    slider("Импульс стрейфа", 8, 80, BHOP.airWish, function(v)
-        BHOP.airWish = v
-    end, 1)
-    slider("Потолок разгона", 60, 1200, BHOP.maxSpeed, function(v)
-        BHOP.maxSpeed = v
-    end, 10)
-    slider("Ускорение на земле", 0, 60, BHOP.groundAccel, function(v)
-        BHOP.groundAccel = v
-    end, 1)
-
-    panel = subPages.jmp
+    panel = pages.move
     section("ПРЫЖОК")
     setInf = row("Бесконечный прыжок", CONFIG.infJump, function(v)
         CONFIG.infJump = v
@@ -2477,23 +1935,6 @@ local function build()
         if v == 0 then return "бхоп" end
         return tostring(v)
     end)
-
-    panel = subPages.wall
-    section("ПРИЛИПАНИЕ К СТЕНЕ")
-    setWall = row("Держаться за стену", WALL.on, function(v)
-        WALL.on = v
-        if not v then
-            local char = LP.Character
-            local hum = char and char:FindFirstChildOfClass("Humanoid")
-            local root = hum and hum.RootPart
-            wallDetach(hum, root)
-            if hum then pcall(function() hum:SetStateEnabled(Enum.HumanoidStateType.Climbing, true) end) end
-        end
-    end)
-    bindRow("Бинд прилипания", function() return WALL.key end, function(k) WALL.key = k end)
-    slider("Скорость по стене", 5, 120, WALL.speed, function(v)
-        WALL.speed = v
-    end, 1)
 
     panel = pages.cam
     section("КАМЕРА")
@@ -2596,14 +2037,10 @@ local function build()
         print("[Venice] риг:", hum and hum.RigType.Name or "нет")
         print("[Venice] weld-режим:", tostring(weldMode), "попыток меша:", char and tostring(cmTries[char]) or "-")
         print("[Venice] CreateMeshPartAsync:", meshCache and "ок" or "недоступен")
-        print("[Venice] аура:", tostring(AURA.on), "режим:", AURA.mode, "стиль:", AURA.style)
+        print("[Venice] аура:", tostring(AURA.on), "режим:", AURA.mode, "стиль:", AURA.style, "цель:", auraChar and "есть" or "нет")
         print("[Venice] аксессуар:", accCurrent, "| состояние:", accState, "| кэш:", accTemplate and "есть" or "нет", "| на голове:", tostring(hasAcc()), "| статус:", accLast)
-        print("[Venice] спидхак:", tostring(CONFIG.speedHack), "режим:", CONFIG.speedMode, "бинду:", CONFIG.speedKey.Name, "скорость:", CONFIG.walkSpeed, "текущая:", speedCur, "факт WS:", hum and hum.WalkSpeed or "-")
-        print("[Venice] бхоп:", tostring(BHOP.on), "бинду:", BHOP.key.Name, "ускорение:", BHOP.accel, "импульс:", BHOP.airWish, "потолок:", BHOP.maxSpeed)
-        print("[Venice] мотор:", motor and "жив" or "нет")
-        print("[Venice] прилипание:", tostring(WALL.on), "бинду:", WALL.key.Name, "скорость:", WALL.speed, "держится:", tostring(WALL.attached))
         print("[Venice] защита частей:", tostring(PROTECT.parts), "здоровье:", tostring(PROTECT.godHealth))
-        print("[Venice] ноклип:", tostring(CONFIG.noclip), "группа:", tostring(groupOk))
+        print("[Venice] ноклип:", tostring(CONFIG.noclip), "частей под ноклипом:", #noclipSaved)
         print("[Venice] частей в папке:", partsFolder and #partsFolder:GetChildren() or 0)
         print("[Venice] fps:", tostring(FPS.boost), "частиц убито:", #killedParts, "эффектов:", #killedFx)
         print("[Venice] FOV:", tostring(fovTarget), "небо:", SKY.mode)
@@ -2611,15 +2048,10 @@ local function build()
     button("Убрать всё", function()
         CONFIG.headless, CONFIG.korblox, CONFIG.force = false, false, false
         CONFIG.infJump = false
-        CONFIG.speedHack = false
         CONFIG.noclip = false
         AURA.on = false
-        WALL.on = false
         PROTECT.parts = false
         PROTECT.godHealth = false
-        BHOP.on = false
-        speedCur = 0
-        wantVel = nil
         accCurrent = 0
         accTemplate = nil
         accState = "idle"
@@ -2630,35 +2062,20 @@ local function build()
         if setBoost then setBoost(false) end
         if setInf then setInf(false) end
         if setAura then setAura(false) end
-        if setSpeed then setSpeed(false) end
         if setNoClip then setNoClip(false) end
-        if setWall then setWall(false) end
-        if setBhop then setBhop(false) end
-        releaseMotor()
+        pcall(restoreNoclip)
         pcall(clearHazards)
         syncFps()
         for _, c in ipairs(targets()) do
             pcall(applyHeadless, c, false)
             pcall(clearKorblox, c)
-            pcall(clearAura, c)
-            pcall(restoreSpeed, c)
         end
-        pcall(setNoClip, nil, false)
+        pcall(clearAura)
         pcall(clearAcc)
         pcall(applySky, "off")
         fovTarget = 70
         pcall(applyFov)
     end)
-
-    toggleSpeed = function()
-        if setSpeed then setSpeed(not CONFIG.speedHack) end
-    end
-    toggleWall = function()
-        if setWall then setWall(not WALL.on) end
-    end
-    toggleBhop = function()
-        if setBhop then setBhop(not BHOP.on) end
-    end
 
     panel = shell
     setTab("look")
@@ -2683,16 +2100,15 @@ local function build()
 
     gui.Destroying:Connect(function()
         pcall(function() RunS:UnbindFromRenderStep("VeniceEnforce") end)
-        pcall(function() RunS:UnbindFromRenderStep("VeniceMove") end)
         pcall(function() CAS:UnbindAction("VeniceMenu") end)
-        pcall(clearAuraAll)
-        pcall(releaseMotor)
+        pcall(clearAura)
+        pcall(restoreNoclip)
         if partsFolder then
             for _, o in ipairs(partsFolder:GetChildren()) do pcall(function() o:Destroy() end) end
         end
     end)
 
-    print("[Venice] v40 · Z меню")
+    print("[Venice] v41 · Z меню")
 end
 
 build()
@@ -2712,12 +2128,7 @@ end)
 track(UIS.InputBegan:Connect(function(input, gp)
     if gp then return end
     if UIS:GetFocusedTextBox() then return end
-    local kc = input.KeyCode
-    if kc == Enum.KeyCode.Unknown then return end
-    if kc == Enum.KeyCode.Z then setOpen() return end
-    if toggleSpeed and kc == CONFIG.speedKey then toggleSpeed() return end
-    if toggleBhop and kc == BHOP.key then toggleBhop() return end
-    if toggleWall and kc == WALL.key then toggleWall() return end
+    if input.KeyCode == Enum.KeyCode.Z then setOpen() end
 end))
 
 pcall(getFolder)
