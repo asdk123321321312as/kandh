@@ -2087,7 +2087,7 @@ local function gridBox(rows)
     f.Parent = panel
     local g = Instance.new("UIGridLayout", f)
     g.CellSize = UDim2.new(0.25, -4, 0, 26)
-    g.CellPadding = UDim2.new(0, 4, 0, 4)
+    g.CellPadding = UDim2.fromOffset(4, 4)
     return f
 end
 
@@ -2507,7 +2507,7 @@ local function build()
     if sl then sl:Destroy() end
     local grid = Instance.new("UIGridLayout", skyPage)
     grid.CellSize = UDim2.new(0.333, -4, 0, 26)
-    grid.CellPadding = UDim.new(0, 4, 0, 4)
+    grid.CellPadding = UDim2.fromOffset(4, 4)
     panel = skyPage
     button("Выкл", function() applySky("off") end)
     button("Ночь", function() applySky("night") end)
@@ -2692,7 +2692,7 @@ local function build()
         end
     end)
 
-    print("[Venice] v39 · Z меню")
+    print("[Venice] v40 · Z меню")
 end
 
 build()
