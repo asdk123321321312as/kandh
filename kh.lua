@@ -24,10 +24,11 @@ local CONFIG = {
     infJump = false, jumpLimit = -1,
     speedHack = false, walkSpeed = 60, speedBoost = true, noclip = false,
     speedKey = Enum.KeyCode.G,
+    speedMode = "both", smooth = true, rampRate = 140,
 }
 local FPS = { boost = false, shadowsOff = false, fxOff = false, partsOff = false, cap = 240 }
 local AURA = { on = false, size = 1, speed = 1, hue = 0, mode = "rainbow", color = Color3.fromRGB(152, 132, 255), style = "both" }
-local WALL = { on = false, speed = 55, reach = 3.5, key = Enum.KeyCode.H }
+local WALL = { on = false, speed = 55, reach = 3.5, key = Enum.KeyCode.H, attached = false }
 
 local ACCS = {
     { id = 132809431,  name = "Doomsekkar" },
@@ -297,7 +298,6 @@ local function loadAcc(id)
     return nil, table.concat(errs, " | ")
 end
 
--- загрузка вынесена из кадра рендера: enforce только монтирует готовый кэш
 local function loadAccAsync(id)
     if accState == "loading" then return end
     accState = "loading"
@@ -617,14 +617,56 @@ local function inputDir()
     return Vector3.zero
 end
 
+-- ============================== мотор ==============================
+
+local motor, motorAtt, motorPart = nil, nil, nil
+
+local function releaseMotor()
+    if motor then pcall(function() motor:Destroy() end) end
+    if motorAtt then pcall(function() motorAtt:Destroy() end) end
+    motor, motorAtt, motorPart = nil, nil, nil
+end
+
+local function dropMotor()
+    if CONFIG.speedHack then return end
+    releaseMotor()
+end
+
+local function ensureMotor(root)
+    if motor and motor.Parent and motorPart == root then return motor end
+    releaseMotor()
+    local att = Instance.new("Attachment")
+    att.Name = "VeniceMotorAtt"
+    att.Parent = root
+    local lv = Instance.new("LinearVelocity")
+    lv.Name = "VeniceMotor"
+    lv.Attachment0 = att
+    lv.RelativeTo = Enum.ActuatorRelativeTo.World
+    lv.ApplyAtCenterOfMass = true
+    lv.ForceLimitMode = Enum.ForceLimitMode.PerAxis
+    lv.MaxAxesForce = Vector3.new(1e6, 0, 1e6)
+    lv.VectorVelocity = Vector3.zero
+    lv.Parent = root
+    motor, motorAtt, motorPart = lv, att, root
+    return lv
+end
+
+local function driveMotor(root, vec, withY)
+    local lv = ensureMotor(root)
+    lv.MaxAxesForce = withY and Vector3.new(1e6, 1e6, 1e6) or Vector3.new(1e6, 0, 1e6)
+    lv.VectorVelocity = vec
+end
+
 -- ============================== спидхак / ноклип ==============================
 
 local WS_ATTR  = "VeniceOrigSpeed"
 local COL_ATTR = "VeniceOrigCol"
 local speedWriting = false
+local speedCur = 0
 local groupOk = false
 local GROUP = "VeniceNoClip"
 local noclipTouched = setmetatable({}, { __mode = "k" })
+local wantVel = nil
 
 local function ensureGroup()
     if groupOk then return true end
@@ -638,37 +680,63 @@ local function ensureGroup()
     return ok
 end
 
+local function speedTarget(dt)
+    if not CONFIG.speedHack then
+        speedCur = 0
+        return 0
+    end
+    local target = CONFIG.walkSpeed
+    if CONFIG.smooth then
+        speedCur = math.min(target, speedCur + (CONFIG.rampRate or 140) * (dt or 0))
+        if speedCur < 10 then speedCur = math.min(target, 10) end
+    else
+        speedCur = target
+    end
+    return speedCur
+end
+
 local function applySpeed(char)
     if not CONFIG.speedHack then return end
     local hum = char and char:FindFirstChildOfClass("Humanoid")
     if not hum or hum.Health <= 0 then return end
     if speedWriting then return end
-    speedWriting = true
-    if hum.WalkSpeed ~= CONFIG.walkSpeed then
+    local want = math.max(speedCur, 8)
+    if hum.WalkSpeed ~= want then
+        speedWriting = true
         if hum:GetAttribute(WS_ATTR) == nil then
             pcall(function() hum:SetAttribute(WS_ATTR, hum.WalkSpeed) end)
         end
-        pcall(function() hum.WalkSpeed = CONFIG.walkSpeed end)
+        pcall(function() hum.WalkSpeed = want end)
+        speedWriting = false
     end
-    speedWriting = false
 end
 
-local function boostVelocity(char)
-    if not CONFIG.speedHack or not CONFIG.speedBoost then return end
+local function pushVelocity(char, dt)
+    wantVel = nil
+    if not CONFIG.speedHack then return end
     local hum = char and char:FindFirstChildOfClass("Humanoid")
     local root = hum and hum.RootPart
     if not root or hum.Health <= 0 then return end
 
+    local spd = speedTarget(dt)
+    if spd <= 0 then return end
+    if CONFIG.speedMode == "ws" then return end
+
     local dir = inputDir()
     if dir.Magnitude < 0.05 then
         dir = hum.MoveDirection
-        if dir.Magnitude < 0.05 then return end
         dir = Vector3.new(dir.X, 0, dir.Z)
-        if dir.Magnitude < 0.05 then return end
+        if dir.Magnitude < 0.05 then
+            dropMotor()
+            return
+        end
         dir = dir.Unit
     end
 
-    local want = dir * CONFIG.walkSpeed
+    local want = dir * spd
+    wantVel = want
+    driveMotor(root, Vector3.new(want.X, 0, want.Z), false)
+
     local v = root.AssemblyLinearVelocity
     local cur = Vector3.new(v.X, 0, v.Z)
     if cur.Magnitude < want.Magnitude then
@@ -774,7 +842,13 @@ local function wallClimb(char)
 
     local moving = inputDir()
     local onFloor = hum.FloorMaterial ~= Enum.Material.Air
-    if onFloor and moving.Magnitude < 0.1 then return end
+    if onFloor and moving.Magnitude < 0.1 then
+        if WALL.attached then
+            WALL.attached = false
+            dropMotor()
+        end
+        return
+    end
 
     local dir = moving
     if dir.Magnitude < 0.1 then
@@ -790,42 +864,81 @@ local function wallClimb(char)
     params.FilterType = Enum.RaycastFilterType.Exclude
     params.FilterDescendantsInstances = { char }
 
-    local origin = root.Position
-    local hit = WS:Raycast(origin, dir * WALL.reach, params)
-    if not hit then return end
+    local hit = WS:Raycast(root.Position, dir * WALL.reach, params)
+    if not hit then
+        if WALL.attached then
+            WALL.attached = false
+            dropMotor()
+        end
+        return
+    end
 
-    local ahead = WS:Raycast(origin + Vector3.new(0, 3, 0) + dir * 0.5, dir * WALL.reach, params)
-    local v = root.AssemblyLinearVelocity
-    local push = Vector3.new(dir.X * WALL.speed * 0.4, WALL.speed, dir.Z * WALL.speed * 0.4)
+    local ahead = WS:Raycast(root.Position + Vector3.new(0, 3, 0) + dir * 0.4, dir * WALL.reach, params)
+    local spd = WALL.speed
 
     if not ahead then
-        -- верх стены: подкидываем на карниз
-        root.AssemblyLinearVelocity = Vector3.new(v.X, WALL.speed * 1.15, v.Z)
+        driveMotor(root, Vector3.new(dir.X * spd * 0.7, spd * 1.1, dir.Z * spd * 0.7), true)
     else
-        root.AssemblyLinearVelocity = push
+        driveMotor(root, Vector3.new(dir.X * spd * 0.4, spd, dir.Z * spd * 0.4), true)
     end
 
-    pcall(function() hum:ChangeState(Enum.HumanoidStateType.Running) end)
+    if not WALL.attached then
+        WALL.attached = true
+        pcall(function() hum:SetStateEnabled(Enum.HumanoidStateType.Climbing, false) end)
+    end
+
+    local v = root.AssemblyLinearVelocity
+    root.AssemblyLinearVelocity = Vector3.new(v.X, spd, v.Z)
 end
 
--- ============================== тики ==============================
+-- ============================== тики движения ==============================
 
-track(RunS.Stepped:Connect(function()
+local moveBound = false
+pcall(function()
+    RunS:BindToRenderStep("VeniceMove", Enum.RenderPriority.Last.Value + 1, function(dt)
+        local char = LP.Character
+        if not char then
+            if motor then releaseMotor() end
+            return
+        end
+        if CONFIG.speedHack then
+            pcall(applySpeed, char)
+            pcall(pushVelocity, char, dt)
+        else
+            speedCur = 0
+        end
+        if WALL.on then pcall(wallClimb, char) end
+        if not CONFIG.speedHack and not WALL.on and motor then releaseMotor() end
+        if CONFIG.noclip then pcall(setNoClip, char, true) end
+    end)
+    moveBound = true
+end)
+
+if not moveBound then
+    track(RunS.RenderStepped:Connect(function(dt)
+        local char = LP.Character
+        if not char then return end
+        if CONFIG.speedHack then
+            pcall(applySpeed, char)
+            pcall(pushVelocity, char, dt)
+        end
+        if WALL.on then pcall(wallClimb, char) end
+        if CONFIG.noclip then pcall(setNoClip, char, true) end
+    end))
+end
+
+-- добиваем откат уже после физики
+track(RunS.Heartbeat:Connect(function()
+    if not wantVel then return end
     local char = LP.Character
-    if not char then return end
-    if CONFIG.speedHack then
-        pcall(applySpeed, char)
-        pcall(boostVelocity, char)
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    local root = hum and hum.RootPart
+    if not root then return end
+    local v = root.AssemblyLinearVelocity
+    local cur = Vector3.new(v.X, 0, v.Z)
+    if cur.Magnitude < wantVel.Magnitude * 0.85 then
+        root.AssemblyLinearVelocity = Vector3.new(wantVel.X, v.Y, wantVel.Z)
     end
-    if WALL.on then pcall(wallClimb, char) end
-    if CONFIG.noclip then pcall(setNoClip, char, true) end
-end))
-
-track(RunS.RenderStepped:Connect(function()
-    local char = LP.Character
-    if not char then return end
-    if CONFIG.speedHack then pcall(applySpeed, char) end
-    if CONFIG.noclip then pcall(setNoClip, char, true) end
 end))
 
 -- ============================== аура ==============================
@@ -877,6 +990,12 @@ local AURA_STYLES = {
     { name = "Туман",  id = "mist" },
     { name = "Оба",    id = "both" },
     { name = "Вихрь",  id = "vortex" },
+}
+
+local SPEED_MODES = {
+    { name = "Оба",       id = "both" },
+    { name = "Velocity",  id = "vel" },
+    { name = "WalkSpeed", id = "ws" },
 }
 
 local function clearAura(char)
@@ -1504,7 +1623,7 @@ local function watchChar(char)
     charMode[char] = nil
     airJumps = 0
     accMountAt = 0
-    accState = accTemplate and "ready" or (accCurrent ~= 0 and "idle" or "idle")
+    accState = accTemplate and "ready" or "idle"
 
     enforce()
     for _, d in ipairs({ 0.2, 0.5, 0.9, 1.4, 2.2, 3.2 }) do
@@ -1554,7 +1673,7 @@ local function watchChar(char)
         track(hum:GetPropertyChangedSignal("RigType"):Connect(function() task.defer(enforce) end))
         track(hum:GetPropertyChangedSignal("WalkSpeed"):Connect(function()
             if speedWriting or not CONFIG.speedHack then return end
-            if hum.WalkSpeed ~= CONFIG.walkSpeed then
+            if hum.WalkSpeed ~= math.max(speedCur, 8) then
                 task.defer(function() pcall(applySpeed, char) end)
             end
         end))
@@ -2071,14 +2190,25 @@ local function build()
     section("СКОРОСТЬ")
     setSpeed = row("Спидхак", CONFIG.speedHack, function(v)
         CONFIG.speedHack = v
+        speedCur = 0
+        wantVel = nil
         local mine = LP.Character
         if v then
             pcall(applySpeed, mine)
         else
+            releaseMotor()
             pcall(restoreSpeed, mine)
         end
     end)
     bindRow("Бинд спидхака", function() return CONFIG.speedKey end, function(k) CONFIG.speedKey = k end)
+    local mg = gridBox(1)
+    for _, m in ipairs(SPEED_MODES) do
+        chip(mg, m.name, function() CONFIG.speedMode = m.id end)
+    end
+    row("Плавный разгон", CONFIG.smooth, function(v)
+        CONFIG.smooth = v
+        speedCur = 0
+    end, 26)
     slider("Скорость", 8, 400, CONFIG.walkSpeed, function(v)
         CONFIG.walkSpeed = v
         if CONFIG.speedHack then pcall(applySpeed, LP.Character) end
@@ -2096,10 +2226,13 @@ local function build()
     setWall = row("Карабкаться", WALL.on, function(v)
         WALL.on = v
         if not v then
+            WALL.attached = false
+            releaseMotor()
             local char = LP.Character
             local hum = char and char:FindFirstChildOfClass("Humanoid")
             local root = hum and hum.RootPart
             if root then pcall(function() root.AssemblyLinearVelocity = Vector3.zero end) end
+            if hum then pcall(function() hum:SetStateEnabled(Enum.HumanoidStateType.Climbing, true) end) end
         end
     end)
     bindRow("Бинд карабканья", function() return WALL.key end, function(k) WALL.key = k end)
@@ -2206,7 +2339,8 @@ local function build()
         print("[Venice] CreateMeshPartAsync:", meshCache and "ок" or "недоступен")
         print("[Venice] аура:", tostring(AURA.on), "режим:", AURA.mode, "стиль:", AURA.style)
         print("[Venice] аксессуар:", accCurrent, "| состояние:", accState, "| кэш:", accTemplate and "есть" or "нет", "| на голове:", tostring(hasAcc()), "| статус:", accLast)
-        print("[Venice] спидхак:", tostring(CONFIG.speedHack), "бинду:", CONFIG.speedKey.Name, "скорость:", CONFIG.walkSpeed, "velocity:", tostring(CONFIG.speedBoost), "факт WS:", hum and hum.WalkSpeed or "-")
+        print("[Venice] спидхак:", tostring(CONFIG.speedHack), "режим:", CONFIG.speedMode, "бинду:", CONFIG.speedKey.Name, "скорость:", CONFIG.walkSpeed, "текущая:", speedCur, "факт WS:", hum and hum.WalkSpeed or "-")
+        print("[Venice] мотор:", motor and "жив" or "нет")
         print("[Venice] карабканье:", tostring(WALL.on), "бинду:", WALL.key.Name, "скорость:", WALL.speed)
         print("[Venice] ноклип:", tostring(CONFIG.noclip), "группа:", tostring(groupOk))
         print("[Venice] частей в папке:", partsFolder and #partsFolder:GetChildren() or 0)
@@ -2220,6 +2354,9 @@ local function build()
         CONFIG.noclip = false
         AURA.on = false
         WALL.on = false
+        WALL.attached = false
+        speedCur = 0
+        wantVel = nil
         accCurrent = 0
         accTemplate = nil
         accState = "idle"
@@ -2233,6 +2370,7 @@ local function build()
         if setSpeed then setSpeed(false) end
         if setNoClip then setNoClip(false) end
         if setWall then setWall(false) end
+        releaseMotor()
         syncFps()
         for _, c in ipairs(targets()) do
             pcall(applyHeadless, c, false)
@@ -2277,14 +2415,16 @@ local function build()
 
     gui.Destroying:Connect(function()
         pcall(function() RunS:UnbindFromRenderStep("VeniceEnforce") end)
+        pcall(function() RunS:UnbindFromRenderStep("VeniceMove") end)
         pcall(function() CAS:UnbindAction("VeniceMenu") end)
         pcall(clearAuraAll)
+        pcall(releaseMotor)
         if partsFolder then
             for _, o in ipairs(partsFolder:GetChildren()) do pcall(function() o:Destroy() end) end
         end
     end)
 
-    print("[Venice] v36 · Z меню")
+    print("[Venice] v37 · Z меню")
 end
 
 build()
