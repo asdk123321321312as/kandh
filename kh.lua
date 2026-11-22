@@ -4,7 +4,7 @@ if genv().VeniceCos then pcall(function() genv().VeniceCos:Destroy() end) end
 if genv().VeniceCosConns then
     for _, c in ipairs(genv().VeniceCosConns) do pcall(function() c:Disconnect() end) end
 end
-genv().VeniceCosConns = {}
+genv().VeniceCosConns = {} -- хуй
 
 local ref = (type(cloneref) == "function" and cloneref) or function(s) return s end
 local Players  = ref(game:GetService("Players"))
@@ -1121,7 +1121,7 @@ local function playAnim(id)
 
     animTrack = { joints = joints, t = 0, len = len }
     ANIM.id = id
-    animLast = "играет " .. id .. " · суставов " .. count .. (r6 and " · ретаргет R15→R6" or "")
+    animLast = "играет " .. id .. " · суставов " .. tostring(count) .. (r6 and " · ретаргет R15->R6" or "")
     for i = #animRecent, 1, -1 do
         if animRecent[i] == id then table.remove(animRecent, i) end
     end
@@ -2870,9 +2870,13 @@ local function build()
     button("Играть", function()
         local ok, msg = playAnim(animInput.Text)
         animStatus.Text = "статус: " .. tostring(msg)
-        if not ok then animStatus.TextColor3 = Color3.fromRGB(255, 110, 110)
-        else animStatus.TextColor3 = OKC end
+        if not ok then
+            animStatus.TextColor3 = Color3.fromRGB(255, 110, 110)
+        else
+            animStatus.TextColor3 = OKC
+        end
     end, true)
+
     button("Стоп", function()
         stopAnim()
         animStatus.Text = "статус: остановлено"
@@ -2892,30 +2896,23 @@ local function build()
         for _, o in ipairs(recentGrid:GetChildren()) do
             if o:IsA("TextButton") then o:Destroy() end
         end
-        if #animRecent == 0 then
-            local l = Instance.new("TextLabel")
-            l.Size = UDim2.new(1, -8, 0, 16)
-            l.BackgroundTransparency = 1
-            l.Font = Enum.Font.GothamMedium
-            l.TextSize = 10
-            l.TextColor3 = SUB
-            l.TextXAlignment = Enum.TextXAlignment.Left
-            l.Text = "  пусто"
-            l.Parent = panel
-            return
-        end
         for _, id in ipairs(animRecent) do
             chip(recentGrid, id, function()
                 animInput.Text = id
                 local ok, msg = playAnim(id)
                 animStatus.Text = "статус: " .. tostring(msg)
-                animStatus.TextColor3 = ok and OKC or Color3.fromRGB(255, 110, 110)
+                if ok then
+                    animStatus.TextColor3 = OKC
+                else
+                    animStatus.TextColor3 = Color3.fromRGB(255, 110, 110)
+                end
             end)
         end
     end
     refreshRecent()
 
     button("Обновить недавние", function() refreshRecent() end)
+
     section("ИНФО")
     local info = Instance.new("TextLabel")
     info.Size = UDim2.new(1, -8, 0, 44)
@@ -3191,8 +3188,8 @@ local function build()
         print("[Venice] размер:", tostring(SIZE.on), "x" .. tostring(SIZE.scale),
             "| BodyHeightScale:", mh and tostring(mh.BodyHeightScale) or "-",
             "| применено:", tostring(LP.Character and sizeApplied[LP.Character]))
-        print("[Venice] анимация:", animTrack and ("играет, суставов " .. tostring(#animRecent)) or "нет",
-            "| id:", ANIM.id, "| статус:", animLast, "| привязка:", tostring(animBound))
+        print("[Venice] анимация:", animTrack and "играет" or "нет", "| id:", ANIM.id, "| статус:", animLast,
+            "| привязка:", tostring(animBound))
         local espN = 0
         for _ in pairs(espData) do espN = espN + 1 end
         print("[Venice] esp:", tostring(ESP.on), "меток:", espN, "стиль:", ESP.style, "скрытность:", tostring(ESP.stealth),
@@ -3272,10 +3269,13 @@ local function build()
         end
     end)
 
-    print("[Venice] v47 · Z меню")
+    print("[Venice] v48 · Z меню")
 end
 
-pcall(build)
+local okBuild, errBuild = pcall(build)
+if not okBuild then
+    warn("[Venice] ошибка UI: " .. tostring(errBuild))
+end
 
 pcall(function()
     CAS:BindActionAtPriority("VeniceMenu", function(_, state, input)
@@ -3298,4 +3298,4 @@ end))
 pcall(getFolder)
 
 task.wait(1.2)
-enforce()
+pcall(enforce)
