@@ -1,10 +1,12 @@
-if getgenv().VeniceCos then pcall(function() getgenv().VeniceCos:Destroy() end) end
-if getgenv().VeniceCosConns then
-    for _, c in ipairs(getgenv().VeniceCosConns) do pcall(function() c:Disconnect() end) end
-end
-getgenv().VeniceCosConns = {} --пизда
+local genv = getgenv or _G
 
-local ref = cloneref or function(s) return s end
+if genv().VeniceCos then pcall(function() genv().VeniceCos:Destroy() end) end
+if genv().VeniceCosConns then
+    for _, c in ipairs(genv().VeniceCosConns) do pcall(function() c:Disconnect() end) end
+end
+genv().VeniceCosConns = {}
+
+local ref = (type(cloneref) == "function" and cloneref) or function(s) return s end
 local Players  = ref(game:GetService("Players"))
 local UIS      = ref(game:GetService("UserInputService"))
 local TweenS   = ref(game:GetService("TweenService"))
@@ -16,7 +18,7 @@ local WS       = ref(workspace)
 local LP       = Players.LocalPlayer
 while not LP do task.wait() end
 
-local function track(c) table.insert(getgenv().VeniceCosConns, c) return c end
+local function track(c) table.insert(genv().VeniceCosConns, c) return c end
 
 local CONFIG = {
     korblox = true, headless = true, force = true,
@@ -52,12 +54,12 @@ local TEXT   = Color3.fromRGB(238, 238, 244)
 local SUB    = Color3.fromRGB(128, 128, 144)
 local OKC    = Color3.fromRGB(120, 220, 160)
 
-if setthreadidentity then pcall(setthreadidentity, 7) end
+if type(setthreadidentity) == "function" then pcall(setthreadidentity, 7) end
 
 local function stealthGui(g)
-    local h = gethui and gethui()
+    local h = (type(gethui) == "function") and gethui() or nil
     local prot = protectgui or protect_gui or (syn and syn.protect_gui)
-    if prot then pcall(prot, g) end
+    if type(prot) == "function" then pcall(prot, g) end
     if h then if pcall(function() g.Parent = h end) then return true end end
     return pcall(function() g.Parent = game:GetService("CoreGui") end)
 end
@@ -611,22 +613,6 @@ local function cleanupParts(list)
         if not alive then pcall(function() p:Destroy() end) end
     end
     if meshCache and not meshCache.Parent then meshCache = nil end
-end
-
--- ============================== ввод ==============================
-
-local function inputDir()
-    local cam = WS.CurrentCamera
-    if not cam then return Vector3.zero end
-    local cf = cam.CFrame
-    local v = Vector3.zero
-    if UIS:IsKeyDown(Enum.KeyCode.W) then v = v + cf.LookVector end
-    if UIS:IsKeyDown(Enum.KeyCode.S) then v = v - cf.LookVector end
-    if UIS:IsKeyDown(Enum.KeyCode.A) then v = v - cf.RightVector end
-    if UIS:IsKeyDown(Enum.KeyCode.D) then v = v + cf.RightVector end
-    v = Vector3.new(v.X, 0, v.Z)
-    if v.Magnitude > 0.01 then return v.Unit end
-    return Vector3.zero
 end
 
 -- ============================== ноклип ==============================
@@ -1251,8 +1237,8 @@ local function espStep()
                     end
                 end
                 if d.hpBg and d.hpFill then
-                    local show = ESP.health and hum
-                    d.hpBg.Visible = show and true or false
+                    local show = (ESP.health and hum) and true or false
+                    d.hpBg.Visible = show
                     if show then
                         local r = math.clamp(hum.Health / math.max(hum.MaxHealth, 1), 0, 1)
                         d.hpFill.Size = UDim2.fromScale(r, 1)
@@ -1640,7 +1626,7 @@ local function setParticles(off)
 end
 
 local function setCap(v)
-    if setfpscap then pcall(setfpscap, FPS.boost and v or 9999) end
+    if type(setfpscap) == "function" then pcall(setfpscap, FPS.boost and v or 9999) end
 end
 
 local function syncFps()
@@ -2113,7 +2099,7 @@ local function build()
     gui.IgnoreGuiInset = true
     gui.DisplayOrder = 1000000
     gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-    getgenv().VeniceCos = gui
+    genv().VeniceCos = gui
     if not stealthGui(gui) then gui.Parent = LP:WaitForChild("PlayerGui") end
 
     local shell = Instance.new("Frame")
@@ -2282,7 +2268,7 @@ local function build()
                 ESP.color = c.color
             end
         end, c.color)
-    end)
+    end
     if not DrawingLib then
         section("ЛИНИИ")
         button("Drawing недоступен — линии выключены", function() ESP.tracer = false end)
@@ -2500,10 +2486,10 @@ local function build()
         end
     end)
 
-    print("[Venice] v42 · Z меню")
+    print("[Venice] v43 · Z меню")
 end
 
-build()
+pcall(build)
 
 pcall(function()
     CAS:BindActionAtPriority("VeniceMenu", function(_, state, input)
