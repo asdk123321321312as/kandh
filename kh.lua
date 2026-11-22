@@ -3,7 +3,7 @@ if genv().VeniceCos then pcall(function() genv().VeniceCos:Destroy() end) end
 if genv().VeniceCosConns then
     for _, c in ipairs(genv().VeniceCosConns) do pcall(function() c:Disconnect() end) end
 end
-genv().VeniceCosConns = {}
+genv().VeniceCosConns = {} -- пошёл нахуй
 
 local ref = (type(cloneref) == "function" and cloneref) or function(s) return s end
 local Players  = ref(game:GetService("Players"))
@@ -1348,18 +1348,27 @@ end)
 
 -- ============================== камера / прыжок ==============================
 
-local fovTarget, fovWriting = 70, false
+local fovTarget, fovUser, fovSettle, fovNext = 70, false, 0, 0
 
-local function applyFov()
-    local cam = WS.CurrentCamera
-    if cam and math.abs(cam.FieldOfView - fovTarget) > 0.2 then
-        fovWriting = true
-        pcall(function() cam.FieldOfView = fovTarget end)
-        fovWriting = false
-    end
+local function fovHold(seconds)
+    local untilT = os.clock() + seconds
+    if untilT > fovSettle then fovSettle = untilT end
 end
 
-track(WS:GetPropertyChangedSignal("CurrentCamera"):Connect(applyFov))
+local function applyFov(force)
+    local cam = WS.CurrentCamera
+    if not cam then return end
+    local now = os.clock()
+    if not force then
+        if now < fovSettle or now < fovNext then return end
+    end
+    if not fovUser and fovTarget == 70 then return end
+    if math.abs(cam.FieldOfView - fovTarget) <= 2 then return end
+    fovNext = now + 0.3
+    pcall(function() cam.FieldOfView = fovTarget end)
+end
+
+track(WS:GetPropertyChangedSignal("CurrentCamera"):Connect(function() fovHold(1.2) end))
 
 local lastJump, airJumps = 0, 0
 local function infJump(auto)
@@ -1647,7 +1656,7 @@ local function enforce()
         end
     end
 
-    if fovTarget ~= 70 then pcall(applyFov) end
+    if fovUser or fovTarget ~= 70 then pcall(applyFov) end
     if SKY.mode ~= "off" then pcall(syncSky) end
 end
 
@@ -1706,6 +1715,7 @@ local function watchChar(char)
     airJumps = 0
     accMountAt = 0
     accState = accTemplate and "ready" or "idle"
+    fovHold(1.2)
 
     enforce()
     for _, d in ipairs({ 0.2, 0.6, 1.2, 2.4 }) do task.delay(d, enforce) end
@@ -1761,7 +1771,10 @@ end
 
 if LP.Character then watchChar(LP.Character) end
 track(LP.CharacterAdded:Connect(watchChar))
-track(LP.CharacterAppearanceLoaded:Connect(enforce))
+track(LP.CharacterAppearanceLoaded:Connect(function()
+    fovHold(1)
+    enforce()
+end))
 
 task.spawn(function()
     while true do
@@ -2353,7 +2366,8 @@ local function build()
     section("КАМЕРА")
     slider("FOV", 40, 120, fovTarget, function(v)
         fovTarget = v
-        applyFov()
+        fovUser = true
+        applyFov(true)
     end, 1)
 
     local skyPage = pages.sky
@@ -2434,6 +2448,7 @@ local function build()
         if AURA.on then refreshAura() end
         if ESP.on then pcall(espStep) end
         if SKY.mode ~= "off" then pcall(applySky, SKY.mode) end
+        if fovUser then applyFov(true) end
         for _ = 1, 6 do
             task.wait(0.12)
             enforce()
@@ -2450,6 +2465,7 @@ local function build()
             return n
         end)())
         print("[Sleepscript] защита:", tostring(PROTECT.parts), "| здоровье:", tostring(PROTECT.godHealth))
+        print("[Sleepscript] fov:", tostring(fovTarget), "| пользовательский:", tostring(fovUser))
         print("[Sleepscript] esp:", tostring(ESP.on), "| Drawing:", DrawingLib and "есть" or "нет")
     end)
     button("Убрать всё", function()
@@ -2480,8 +2496,8 @@ local function build()
         pcall(clearAcc)
         pcall(clearEsp)
         pcall(applySky, "off")
-        fovTarget = 70
-        pcall(applyFov)
+        fovTarget, fovUser = 70, false
+        applyFov(true)
     end)
 
     panel = shell
