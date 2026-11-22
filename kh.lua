@@ -3,7 +3,7 @@ if genv().VeniceCos then pcall(function() genv().VeniceCos:Destroy() end) end
 if genv().VeniceCosConns then
     for _, c in ipairs(genv().VeniceCosConns) do pcall(function() c:Disconnect() end) end
 end
-genv().VeniceCosConns = {} -- пихта
+genv().VeniceCosConns = {}
 
 local ref = (type(cloneref) == "function" and cloneref) or function(s) return s end
 local Players  = ref(game:GetService("Players"))
@@ -22,7 +22,7 @@ local function track(c) table.insert(genv().VeniceCosConns, c) return c end
 local CONFIG = { korblox = true, headless = true, force = true, infJump = false, jumpLimit = -1, noclip = false }
 local FPS    = { boost = false, shadowsOff = false, fxOff = false, partsOff = false, cap = 240 }
 local AURA   = { on = false, size = 1, speed = 1, spin = 1, hue = 0, mode = "rainbow", color = Color3.fromRGB(152, 132, 255), style = "ring" }
-local PROTECT = { parts = true, godHealth = true }
+local PROTECT = { parts = false, godHealth = false }
 local ESP = {
     on = false, box = true, name = true, dist = true, health = true, tracer = true,
     rainbow = true, color = Color3.fromRGB(152, 132, 255),
@@ -547,7 +547,7 @@ end
 -- ============================== ноклип ==============================
 
 local noclipSaved = {}
-local noclipLock = false
+local noclipActive = false
 
 local function noclipOne(d, on)
     if not d:IsA("BasePart") then return end
@@ -561,17 +561,59 @@ local function noclipOne(d, on)
     end
 end
 
+local function unstick(char)
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    local root = hum and hum.RootPart
+    if not root then return end
+    local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Exclude
+    params.FilterDescendantsInstances = { char }
+    local hit = WS:Raycast(root.Position + Vector3.new(0, 200, 0), Vector3.new(0, -400, 0), params)
+    if hit and hit.Position.Y > root.Position.Y - 0.5 then
+        local delta = math.min(hit.Position.Y - root.Position.Y + 3, 200)
+        if delta > 0.2 then
+            char:PivotTo(char:GetPivot() + Vector3.new(0, delta, 0))
+            pcall(function() root.AssemblyLinearVelocity = Vector3.zero end)
+        end
+    end
+end
+
 local function restoreNoclip()
-    for d, o in pairs(noclipSaved) do
+    local snap = noclipSaved
+    noclipSaved = {}
+    for d, o in pairs(snap) do
         if d.Parent then pcall(function() d.CanCollide = o end) end
     end
-    table.clear(noclipSaved)
+    task.delay(0.3, function()
+        for d, o in pairs(snap) do
+            if d.Parent and d.CanCollide ~= o then pcall(function() d.CanCollide = o end) end
+        end
+    end)
+end
+
+local function setNoclip(on)
+    CONFIG.noclip = on
+    noclipActive = on
+    if on then
+        local c = LP.Character
+        if c then
+            for _, d in ipairs(c:GetDescendants()) do
+                if d:IsA("BasePart") then noclipOne(d, true) end
+            end
+        end
+    else
+        restoreNoclip()
+        task.delay(0.15, function()
+            local c = LP.Character
+            if c then pcall(unstick, c) end
+        end)
+    end
 end
 
 local function noclipTick()
-    if not CONFIG.noclip then return end
+    if not noclipActive then return end
     local c = LP.Character
-    if not c or noclipLock then return end
+    if not c then return end
     for _, d in ipairs(c:GetDescendants()) do
         if d:IsA("BasePart") and d.CanCollide then noclipOne(d, true) end
     end
@@ -723,12 +765,12 @@ local function push(e, parent, made)
     auraEmitters[#auraEmitters + 1] = e
 end
 
-local function makeRing(att, made, rate)
+local function makeRing(root, att, made, rate)
     local e = baseEmitter()
     e.Shape = Enum.ParticleEmitterShape.Disc
     e.ShapeStyle = Enum.ParticleEmitterShapeStyle.Surface
     e.ShapePartial = 1
-    e.Rate = rate or (20 * AURA.size)
+    e.Rate = rate or (22 * AURA.size)
     e.Lifetime = NumberRange.new(0.6, 1.1)
     e.Speed = NumberRange.new(0.6, 2.2)
     e.Drag = 3
@@ -739,11 +781,11 @@ local function makeRing(att, made, rate)
     push(e, att, made)
 end
 
-local function makeMist(att, made)
+local function makeMist(root, att, made)
     local e = baseEmitter()
     e.Shape = Enum.ParticleEmitterShape.Sphere
     e.ShapeStyle = Enum.ParticleEmitterShapeStyle.Volume
-    e.Rate = 8 * AURA.size
+    e.Rate = 10 * AURA.size
     e.Lifetime = NumberRange.new(1, 1.8)
     e.Speed = NumberRange.new(0.2, 0.9)
     e.Drag = 4
@@ -753,13 +795,13 @@ local function makeMist(att, made)
     push(e, att, made)
 end
 
-local function makeOrbit(root, made)
+local function makeOrbit(root, att, made)
     for i = 1, 3 do
         local a = newAtt(root, made, 0.4)
         a.Position = Vector3.new(math.cos(i * 2.09) * 2, 0.4, math.sin(i * 2.09) * 2)
         local e = baseEmitter()
         e.Shape = Enum.ParticleEmitterShape.Sphere
-        e.Rate = 45 * AURA.size
+        e.Rate = 50 * AURA.size
         e.Lifetime = NumberRange.new(0.25, 0.5)
         e.Speed = NumberRange.new(0.05, 0.4)
         e.Drag = 2
@@ -770,11 +812,11 @@ local function makeOrbit(root, made)
     end
 end
 
-local function makeSpiral(root, made)
+local function makeSpiral(root, att, made)
     local a = newAtt(root, made)
     local e = baseEmitter()
     e.Shape = Enum.ParticleEmitterShape.Sphere
-    e.Rate = 40 * AURA.size
+    e.Rate = 45 * AURA.size
     e.Lifetime = NumberRange.new(0.4, 0.8)
     e.Speed = NumberRange.new(0.1, 0.5)
     e.Drag = 1.5
@@ -784,31 +826,31 @@ local function makeSpiral(root, made)
     push(e, a, made)
 end
 
-local function makeVortex(root, made)
+local function makeVortex(root, att, made)
     local a = newAtt(root, made, 0.2)
     local e = baseEmitter()
     e.Shape = Enum.ParticleEmitterShape.Disc
     e.ShapeStyle = Enum.ParticleEmitterShapeStyle.Surface
     e.ShapePartial = 1
-    e.ShapeRadius = 1.3 * AURA.size
-    e.Rate = 70 * AURA.size
+    pcall(function() e.ShapeRadius = 1.6 * AURA.size end)
+    e.Rate = 80 * AURA.size
     e.Lifetime = NumberRange.new(0.5, 1.1)
     e.Speed = NumberRange.new(0.1, 0.7)
     e.Drag = 2
     e.Acceleration = Vector3.new(0, 9, 0)
-    e.Size = NumberSequence.new({ kp(0, 0.38 * AURA.size), kp(1, 0) })
+    e.Size = NumberSequence.new({ kp(0, 0.4 * AURA.size), kp(1, 0) })
     e.Transparency = NumberSequence.new({ kp(0, 0.1), kp(1, 1) })
     e.RotSpeed = NumberRange.new(-300, 300)
     push(e, a, made)
 end
 
-local function makeWave(root, made)
-    local a = newAtt(root, made, 0.15)
+local function makeWave(root, att, made)
+    local a = newAtt(root, made, 0.3)
     local e = baseEmitter()
     e.Shape = Enum.ParticleEmitterShape.Disc
     e.ShapeStyle = Enum.ParticleEmitterShapeStyle.Surface
     e.ShapePartial = 1
-    e.ShapeRadius = 0.4 * AURA.size
+    pcall(function() e.ShapeRadius = 0.6 * AURA.size end)
     e.Rate = 0
     e.Lifetime = NumberRange.new(0.5, 0.85)
     e.Speed = NumberRange.new(6, 9)
@@ -819,59 +861,59 @@ local function makeWave(root, made)
     push(e, a, made)
 end
 
-local function makeFlame(root, made)
+local function makeFlame(root, att, made)
     local a = newAtt(root, made, -1)
     local e = baseEmitter()
     e.Shape = Enum.ParticleEmitterShape.Disc
     e.ShapeStyle = Enum.ParticleEmitterShapeStyle.Surface
-    e.ShapeRadius = 0.65 * AURA.size
-    e.Rate = 60 * AURA.size
+    pcall(function() e.ShapeRadius = 0.9 * AURA.size end)
+    e.Rate = 70 * AURA.size
     e.Lifetime = NumberRange.new(0.35, 0.7)
     e.Speed = NumberRange.new(1.5, 3.5)
     e.Acceleration = Vector3.new(0, 7, 0)
     e.Drag = 2
-    e.Size = NumberSequence.new({ kp(0, 0.6 * AURA.size), kp(1, 0) })
+    e.Size = NumberSequence.new({ kp(0, 0.65 * AURA.size), kp(1, 0) })
     e.Transparency = NumberSequence.new({ kp(0, 0.1), kp(1, 1) })
     e.RotSpeed = NumberRange.new(-160, 160)
     push(e, a, made)
 end
 
-local function makeRain(root, made)
-    local a = newAtt(root, made, 7 * AURA.size)
+local function makeRain(root, att, made)
+    local a = newAtt(root, made, 6 * AURA.size)
     local e = baseEmitter()
     e.Shape = Enum.ParticleEmitterShape.Sphere
     e.ShapeStyle = Enum.ParticleEmitterShapeStyle.Surface
-    e.ShapeRadius = 2.6 * AURA.size
-    e.Rate = 35 * AURA.size
+    pcall(function() e.ShapeRadius = 3 * AURA.size end)
+    e.Rate = 40 * AURA.size
     e.Lifetime = NumberRange.new(1.1, 1.6)
     e.Speed = NumberRange.new(0, 0.4)
     e.Acceleration = Vector3.new(0, -10, 0)
-    e.Size = NumberSequence.new({ kp(0, 0.22 * AURA.size), kp(1, 0.05 * AURA.size) })
+    e.Size = NumberSequence.new({ kp(0, 0.25 * AURA.size), kp(1, 0.05 * AURA.size) })
     e.Transparency = NumberSequence.new({ kp(0, 0.1), kp(1, 1) })
     push(e, a, made)
 end
 
-local function makeCage(root, made)
+local function makeCage(root, att, made)
     local a = newAtt(root, made, 1.2)
     local e = baseEmitter()
     e.Shape = Enum.ParticleEmitterShape.Sphere
     e.ShapeStyle = Enum.ParticleEmitterShapeStyle.Surface
-    e.ShapeRadius = 1.8 * AURA.size
-    e.Rate = 30 * AURA.size
+    pcall(function() e.ShapeRadius = 2 * AURA.size end)
+    e.Rate = 35 * AURA.size
     e.Lifetime = NumberRange.new(0.7, 1)
     e.Speed = NumberRange.new(0.02, 0.15)
-    e.Size = NumberSequence.new({ kp(0, 0.3 * AURA.size), kp(1, 0) })
+    e.Size = NumberSequence.new({ kp(0, 0.32 * AURA.size), kp(1, 0) })
     e.Transparency = NumberSequence.new({ kp(0, 0.15), kp(1, 1) })
     e.RotSpeed = NumberRange.new(-90, 90)
     push(e, a, made)
 end
 
-local function makeBurst(root, made)
+local function makeBurst(root, att, made)
     local a = newAtt(root, made, 0.6)
     local e = baseEmitter()
     e.Shape = Enum.ParticleEmitterShape.Sphere
     e.ShapeStyle = Enum.ParticleEmitterShapeStyle.Volume
-    e.ShapeRadius = 0.4 * AURA.size
+    pcall(function() e.ShapeRadius = 0.5 * AURA.size end)
     e.Rate = 0
     e.Lifetime = NumberRange.new(0.45, 0.8)
     e.Speed = NumberRange.new(5, 8)
@@ -880,6 +922,20 @@ local function makeBurst(root, made)
     e.Transparency = NumberSequence.new({ kp(0, 0.1), kp(1, 1) })
     e.RotSpeed = NumberRange.new(-240, 240)
     push(e, a, made)
+end
+
+local BUILDERS = {
+    ring = makeRing, mist = makeMist, orbit = makeOrbit, spiral = makeSpiral,
+    vortex = makeVortex, wave = makeWave, flame = makeFlame, rain = makeRain,
+    cage = makeCage, burst = makeBurst,
+}
+
+local function buildStyle(root, att, made)
+    local b = BUILDERS[AURA.style] or BUILDERS.ring
+    local ok = pcall(b, root, att, made)
+    if not ok or #auraEmitters == 0 then
+        pcall(BUILDERS.ring, root, att, made)
+    end
 end
 
 local function applyAura(char, on)
@@ -900,19 +956,7 @@ local function applyAura(char, on)
         att.Parent = root
         made[#made + 1] = att
 
-        local st = AURA.style
-        if st == "orbit" then makeOrbit(root, made)
-        elseif st == "spiral" then makeSpiral(root, made)
-        elseif st == "vortex" then makeVortex(root, made)
-        elseif st == "wave" then makeWave(root, made)
-        elseif st == "flame" then makeFlame(root, made)
-        elseif st == "rain" then makeRain(root, made)
-        elseif st == "cage" then makeCage(root, made)
-        elseif st == "burst" then makeBurst(root, made)
-        elseif st == "mist" then makeMist(att, made)
-        elseif st == "flicker" then makeRing(att, made, 0)
-        elseif st == "pulse" then makeRing(att, made, 14 * AURA.size)
-        else makeRing(att, made) end
+        buildStyle(root, att, made)
 
         local light = Instance.new("PointLight")
         light.Brightness = 2
@@ -965,30 +1009,30 @@ local function updateAura(dt)
         local a = auraNodes[1]
         if a and a.Parent then
             local ang = auraT * 1.6 * AURA.spin
-            a.Position = Vector3.new(math.cos(ang) * 0.25, 0.2, math.sin(ang) * 0.25)
+            a.Position = Vector3.new(math.cos(ang) * 0.3, 0.2, math.sin(ang) * 0.3)
         end
     elseif st == "flicker" then
         local e = auraEmitters[1]
         if e then
-            if math.random() < 0.2 then
-                e.Rate = (50 + math.random() * 80) * AURA.size
-                pcall(function() e:Emit(math.random(1, 4)) end)
+            if math.random() < 0.25 then
+                e.Rate = (60 + math.random() * 80) * AURA.size
+                pcall(function() e:Emit(math.random(2, 5)) end)
             else
-                e.Rate = 0
+                e.Rate = 6 * AURA.size
             end
         end
         if auraLight then auraLight.Brightness = math.random() < 0.35 and 5 or 0.4 end
     elseif st == "pulse" then
         local s = (math.sin(auraT * 3 * AURA.speed) + 1) / 2
         local e = auraEmitters[1]
-        if e then e.Rate = (5 + 45 * s) * AURA.size end
+        if e then e.Rate = (6 + 50 * s) * AURA.size end
         if auraLight then auraLight.Brightness = 1 + s * 3 end
     elseif st == "wave" or st == "burst" then
         if auraT >= auraNext then
             local gap = st == "wave" and 0.55 or 0.7
             auraNext = auraT + gap / AURA.speed
             local e = auraEmitters[1]
-            if e then pcall(function() e:Emit(math.floor((st == "wave" and 22 or 18) * AURA.size)) end) end
+            if e then pcall(function() e:Emit(math.floor((st == "wave" and 24 or 18) * AURA.size)) end) end
             if st == "wave" and auraLight then auraLight.Brightness = 4 end
         end
     end
@@ -1675,7 +1719,7 @@ local function watchChar(char)
     track(char.DescendantAdded:Connect(function(d)
         if d:IsA("BasePart") then
             hookPart(d)
-            if CONFIG.noclip then pcall(noclipOne, d, true) end
+            if noclipActive then pcall(noclipOne, d, true) end
             task.defer(enforce)
         elseif d:IsA("Accessory") or d:IsA("Hat") or d:IsA("Decal") or d:IsA("CharacterMesh") then
             task.defer(enforce)
@@ -1733,7 +1777,7 @@ end)
 local gui, panel, open, shellRef
 local pages, tabBtns = {}, {}
 local statusLabel
-local setHeadless, setKorblox, setForce, setBoost, setInf, setAura, setNoClip, setEsp
+local setHeadless, setKorblox, setForce, setBoost, setInf, setAura, setNoClip, setEsp, setProtect, setGod
 
 local function tw(o, t, p) TweenS:Create(o, TweenInfo.new(t), p):Play() end
 local function corner(o, r) Instance.new("UICorner", o).CornerRadius = UDim.new(0, r) end
@@ -1755,11 +1799,9 @@ local function section(text)
     line.Parent = panel
 end
 
-local function hoverFx(b, on)
+local function hoverFx(b)
     track(b.MouseEnter:Connect(function() tw(b, 0.12, { BackgroundColor3 = HOVER }) end))
-    track(b.MouseLeave:Connect(function()
-        if on then on() else tw(b, 0.12, { BackgroundColor3 = ROW }) end
-    end))
+    track(b.MouseLeave:Connect(function() tw(b, 0.12, { BackgroundColor3 = ROW }) end))
 end
 
 local function row(text, default, cb, h)
@@ -2133,12 +2175,6 @@ local function build()
         corner(b, 6)
         tabBtns[t.id] = b
         b.MouseButton1Click:Connect(function() setTab(t.id) end)
-        b.MouseEnter:Connect(function()
-            if not pages[t.id] or not pages[t.id].Visible then tw(b, 0.1, { BackgroundColor3 = HOVER }) end
-        end)
-        b.MouseLeave:Connect(function()
-            if not pages[t.id] or not pages[t.id].Visible then tw(b, 0.1, { BackgroundColor3 = ROW }) end
-        end)
 
         local p = Instance.new("ScrollingFrame")
         p.Size = UDim2.new(1, -14, 1, -104)
@@ -2368,16 +2404,13 @@ local function build()
 
     panel = pages.misc
     section("КОЛЛИЗИИ")
-    setNoClip = row("Ноклип", CONFIG.noclip, function(v)
-        CONFIG.noclip = v
-        if not v then restoreNoclip() end
-    end)
+    setNoClip = row("Ноклип", CONFIG.noclip, function(v) setNoclip(v) end)
     section("ЗАЩИТА")
-    row("Иммунитет к урону и чекпоинтам", PROTECT.parts, function(v)
+    setProtect = row("Иммунитет к урону и чекпоинтам", PROTECT.parts, function(v)
         PROTECT.parts = v
         if v then scanHazards() else clearHazards() end
     end)
-    row("Держать здоровье", PROTECT.godHealth, function(v)
+    setGod = row("Держать здоровье", PROTECT.godHealth, function(v)
         PROTECT.godHealth = v
         if v then
             local hum = LP.Character and LP.Character:FindFirstChildOfClass("Humanoid")
@@ -2408,17 +2441,20 @@ local function build()
         print("[Sleepscript] переприменено")
     end, true)
     button("Диагностика", function()
-        print("[Sleepscript] целей:", #targets(), "| риг:", tostring(LP.Character and LP.Character:FindFirstChildOfClass("Humanoid") and LP.Character:FindFirstChildOfClass("Humanoid").RigType.Name))
-        print("[Sleepscript] меш:", meshCache and "ок" or "нет", "| частей в папке:", partsFolder and #partsFolder:GetChildren() or 0)
-        print("[Sleepscript] аксессуар:", accState, accLast, "| на голове:", tostring(hasAcc()))
-        print("[Sleepscript] аура:", tostring(AURA.on), AURA.style, "| цель:", tostring(auraChar ~= nil))
-        print("[Sleepscript] fps:", tostring(FPS.boost), "| убито частиц:", #killedParts, "| эффектов:", #killedFx)
-        print("[Sleepscript] ноклип:", tostring(CONFIG.noclip), "| защита:", tostring(PROTECT.parts))
+        print("[Sleepscript] целей:", #targets(), "| частей в папке:", partsFolder and #partsFolder:GetChildren() or 0)
+        print("[Sleepscript] меш:", meshCache and "ок" or "нет", "| аксессуар:", accState, accLast)
+        print("[Sleepscript] аура:", tostring(AURA.on), AURA.style, "| эмиттеров:", #auraEmitters)
+        print("[Sleepscript] fps:", tostring(FPS.boost), "| ноклип:", tostring(noclipActive), "| под ноклипом:", (function()
+            local n = 0
+            for _ in pairs(noclipSaved) do n = n + 1 end
+            return n
+        end)())
+        print("[Sleepscript] защита:", tostring(PROTECT.parts), "| здоровье:", tostring(PROTECT.godHealth))
         print("[Sleepscript] esp:", tostring(ESP.on), "| Drawing:", DrawingLib and "есть" or "нет")
     end)
     button("Убрать всё", function()
         CONFIG.headless, CONFIG.korblox, CONFIG.force = false, false, false
-        CONFIG.infJump, CONFIG.noclip = false, false
+        CONFIG.infJump = false
         AURA.on, ESP.on = false, false
         PROTECT.parts, PROTECT.godHealth = false, false
         accCurrent, accTemplate, accState = 0, nil, "idle"
@@ -2431,6 +2467,8 @@ local function build()
         if setAura then setAura(false) end
         if setNoClip then setNoClip(false) end
         if setEsp then setEsp(false) end
+        if setProtect then setProtect(false) end
+        if setGod then setGod(false) end
         pcall(restoreNoclip)
         pcall(clearHazards)
         syncFps()
