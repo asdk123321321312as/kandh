@@ -4,7 +4,7 @@ if genv().VeniceCos then pcall(function() genv().VeniceCos:Destroy() end) end
 if genv().VeniceCosConns then
     for _, c in ipairs(genv().VeniceCosConns) do pcall(function() c:Disconnect() end) end
 end
-genv().VeniceCosConns = {}
+genv().VeniceCosConns = {} --хуй
 
 local ref = (type(cloneref) == "function" and cloneref) or function(s) return s end
 local Players  = ref(game:GetService("Players"))
@@ -402,6 +402,7 @@ local function mountAcc()
     if biggest < 0.25 then
         handle.Size = handle.Size * (0.6 / math.max(biggest, 0.01))
     end
+    pcall(function() handle:SetAttribute("VeniceBaseSize", handle.Size) end)
 
     local att = handle:FindFirstChildWhichIsA("Attachment")
     if att then
@@ -521,125 +522,9 @@ local function getMeshPart()
     return nil
 end
 
-local function buildKorbloxLeg(char, upper, lower, foot)
-    local top = upper.CFrame * CFrame.new(0, upper.Size.Y / 2, 0)
-    local bottom
-    if foot and foot:IsA("BasePart") then
-        bottom = foot.CFrame * CFrame.new(0, -foot.Size.Y / 2, 0)
-    elseif lower and lower:IsA("BasePart") then
-        bottom = lower.CFrame * CFrame.new(0, -lower.Size.Y / 2, 0)
-    else
-        bottom = upper.CFrame * CFrame.new(0, -upper.Size.Y, 0)
-    end
-
-    local a, b = top.Position, bottom.Position
-    local delta = a - b
-    local len = math.clamp(delta.Magnitude, 0.5, 9)
-    local up = delta.Magnitude > 1e-3 and delta.Unit or Vector3.new(0, 1, 0)
-    local mid = (a + b) / 2
-    local w = math.clamp(math.max(upper.Size.X, upper.Size.Z) * 1.05, 0.3, 1.2)
-
-    local part = getMeshPart()
-    if part then
-        pcall(function()
-            part.TextureID = TEX
-            part.MeshId = MESH
-        end)
-        part.Name = "VeniceKorbloxLeg"
-    else
-        part = Instance.new("Part")
-        part.Name = "VeniceKorbloxLeg"
-        local sm = Instance.new("SpecialMesh", part)
-        sm.MeshType = Enum.MeshType.FileMesh
-        sm.MeshId = MESH
-        sm.TextureId = TEX
-    end
-
-    part.Size = Vector3.new(w, len, w)
-    part.CFrame = CFrame.lookAt(mid, mid + upper.CFrame.RightVector, up)
-    part.Anchored = false
-    part.CanCollide = false
-    part.CanQuery = false
-    part.CanTouch = false
-    part.CastShadow = true
-    pcall(function() part.Massless = true end)
-    part.TopSurface = Enum.SurfaceType.Smooth
-    part.BottomSurface = Enum.SurfaceType.Smooth
-    part.Parent = getFolder()
-
-    local weld = Instance.new("WeldConstraint")
-    weld.Part0 = part
-    weld.Part1 = upper
-    weld.Parent = part
-
-    setHidden(upper, true)
-    setHidden(lower, true)
-    setHidden(foot, true)
-end
-
-local function applyKorblox(char, on)
-    if not char then return end
-    local hum = char:FindFirstChildOfClass("Humanoid")
-    if not hum then return end
-
-    if not on then
-        clearKorblox(char)
-        charMode[char] = nil
-        cmTries[char] = nil
-        return
-    end
-    if korbloxOk(char) then return end
-
-    if hum.RigType == Enum.HumanoidRigType.R6 and charMode[char] ~= "weld" then
-        cmTries[char] = (cmTries[char] or 0) + 1
-        if cmTries[char] > 5 then
-            charMode[char] = "weld"
-            weldMode = true
-        else
-            for _, d in ipairs(char:GetChildren()) do
-                if d:IsA("CharacterMesh") and d.BodyPart == Enum.BodyPart.RightLeg and d.Name ~= "VeniceKorblox" then
-                    savedCharMesh[char] = { mesh = d.MeshId, tex = d.OverlayTextureId }
-                    pcall(function() d:Destroy() end)
-                    break
-                end
-            end
-            local m = Instance.new("CharacterMesh")
-            m.Name = "VeniceKorblox"
-            m.BodyPart = Enum.BodyPart.RightLeg
-            m.MeshId = 101851696
-            m.OverlayTextureId = 101851254
-            m.Parent = char
-            return
-        end
-    end
-
-    local upper, lower, foot = findLegParts(char)
-    if not upper then return end
-    buildKorbloxLeg(char, upper, lower, foot)
-end
-
-local function cleanupParts(list)
-    if not partsFolder or not partsFolder.Parent then return end
-    for _, p in ipairs(partsFolder:GetChildren()) do
-        local w = p:FindFirstChildWhichIsA("WeldConstraint")
-        local alive = false
-        if w then
-            for _, c in ipairs(list) do
-                if (w.Part0 and w.Part0:IsDescendantOf(c)) or (w.Part1 and w.Part1:IsDescendantOf(c)) then
-                    alive = true
-                    break
-                end
-            end
-        end
-        if not alive then pcall(function() p:Destroy() end) end
-    end
-    if meshCache and not meshCache.Parent then meshCache = nil end
-end
-
 -- ============================== размер персонажа (клиент) ==============================
 
 local sizeSaved = setmetatable({}, { __mode = "k" })
-local R15_PROPS = { "BodyHeightScale", "BodyWidthScale", "BodyDepthScale", "HeadScale" }
 
 local function scaleKorbloxLegs(char, f)
     if not partsFolder then return end
@@ -652,8 +537,39 @@ local function scaleKorbloxLegs(char, f)
                     pcall(function() p:SetAttribute("VeniceBaseSize", p.Size) end)
                     base = p.Size
                 end
-                pcall(function() p.Size = base * f end)
+                local sz = base * f
+                pcall(function() p.Size = sz end)
+                local upper = w.Part1
+                if upper:IsA("BasePart") then
+                    local top = upper.CFrame * CFrame.new(0, -upper.Size.Y / 2, 0)
+                    local mid = top.Position - Vector3.new(0, sz.Y / 2, 0)
+                    pcall(function()
+                        p.CFrame = CFrame.lookAt(mid, mid + upper.CFrame.RightVector, Vector3.new(0, 1, 0))
+                    end)
+                end
             end
+        end
+    end
+end
+
+local function repositionAcc(handle, head)
+    local lift = head.Size.Y / 2 + handle.Size.Y / 2 * 0.5 + accOffsetY
+    pcall(function() handle.CFrame = head.CFrame * CFrame.new(0, lift, 0) end)
+end
+
+local function scaleAccParts(char, f)
+    local head = char:FindFirstChild("Head")
+    if not head or not head:IsA("BasePart") then return end
+    for _, h in ipairs(accParts()) do
+        local w = h:FindFirstChildWhichIsA("WeldConstraint")
+        if w and w.Part1 == head then
+            local base = h:GetAttribute("VeniceBaseSize")
+            if not base then
+                pcall(function() h:SetAttribute("VeniceBaseSize", h.Size) end)
+                base = h.Size
+            end
+            pcall(function() h.Size = base * f end)
+            repositionAcc(h, head)
         end
     end
 end
@@ -667,41 +583,51 @@ local function applySize(char, on)
         local s = sizeSaved[char]
         if s then
             sizeSaved[char] = nil
-            if s.meshes then
-                for m, v in pairs(s.meshes) do pcall(function() m.Scale = v end) end
+            for p, sz in pairs(s.parts) do
+                if p.Parent then pcall(function() p.Size = sz end) end
             end
-            if s.hum then
-                for prop, v in pairs(s.hum) do pcall(function() hum[prop] = v end) end
+            for m, j in pairs(s.joints) do
+                if m.Parent then
+                    pcall(function() m.C0 = j[1] m.C1 = j[2] end)
+                end
             end
+            pcall(function() hum.HipHeight = s.hip end)
         end
         scaleKorbloxLegs(char, 1)
+        scaleAccParts(char, 1)
         return
     end
 
     local f = SIZE.scale
     local s = sizeSaved[char]
     if not s then
-        s = { meshes = {}, hum = {} }
+        s = { parts = {}, joints = {}, hip = hum.HipHeight }
         sizeSaved[char] = s
-        for _, prop in ipairs(R15_PROPS) do
-            pcall(function() s.hum[prop] = hum[prop] end)
-        end
         for _, d in ipairs(char:GetDescendants()) do
-            if d:IsA("SpecialMesh") then s.meshes[d] = d.Scale end
+            if d:IsA("BasePart") then
+                s.parts[d] = d.Size
+            elseif d:IsA("Motor6D") then
+                s.joints[d] = { d.C0, d.C1 }
+            end
         end
     end
 
-    if hum.RigType == Enum.HumanoidRigType.R15 then
-        for _, prop in ipairs(R15_PROPS) do
-            local base = s.hum[prop]
-            if base then pcall(function() hum[prop] = base * f end) end
-        end
-    else
-        for m, base in pairs(s.meshes) do
-            if m.Parent then pcall(function() m.Scale = base * f end) end
+    for p, base in pairs(s.parts) do
+        if p.Parent then pcall(function() p.Size = base * f end) end
+    end
+    for m, j in pairs(s.joints) do
+        if m.Parent then
+            local c0, c1 = j[1], j[2]
+            pcall(function()
+                m.C0 = CFrame.new(c0.Position * f) * (c0 - c0.Position)
+                m.C1 = CFrame.new(c1.Position * f) * (c1 - c1.Position)
+            end)
         end
     end
+    pcall(function() hum.HipHeight = s.hip * f end)
+
     scaleKorbloxLegs(char, f)
+    scaleAccParts(char, f)
 end
 
 -- ============================== ноклип ==============================
@@ -849,6 +775,124 @@ track(WS.DescendantAdded:Connect(function(d)
     if not PROTECT.parts then return end
     if d:IsA("BasePart") and isHazName(d.Name) then pcall(protectPart, d, true) end
 end))
+
+-- ============================== коробокс: сборка ==============================
+
+local function buildKorbloxLeg(char, upper, lower, foot)
+    local top = upper.CFrame * CFrame.new(0, upper.Size.Y / 2, 0)
+    local bottom
+    if foot and foot:IsA("BasePart") then
+        bottom = foot.CFrame * CFrame.new(0, -foot.Size.Y / 2, 0)
+    elseif lower and lower:IsA("BasePart") then
+        bottom = lower.CFrame * CFrame.new(0, -lower.Size.Y / 2, 0)
+    else
+        bottom = upper.CFrame * CFrame.new(0, -upper.Size.Y, 0)
+    end
+
+    local a, b = top.Position, bottom.Position
+    local delta = a - b
+    local len = math.clamp(delta.Magnitude, 0.5, 20)
+    local up = delta.Magnitude > 1e-3 and delta.Unit or Vector3.new(0, 1, 0)
+    local mid = (a + b) / 2
+    local w = math.clamp(math.max(upper.Size.X, upper.Size.Z) * 1.05, 0.3, 3)
+
+    local part = getMeshPart()
+    if part then
+        pcall(function()
+            part.TextureID = TEX
+            part.MeshId = MESH
+        end)
+        part.Name = "VeniceKorbloxLeg"
+    else
+        part = Instance.new("Part")
+        part.Name = "VeniceKorbloxLeg"
+        local sm = Instance.new("SpecialMesh", part)
+        sm.MeshType = Enum.MeshType.FileMesh
+        sm.MeshId = MESH
+        sm.TextureId = TEX
+    end
+
+    part.Size = Vector3.new(w, len, w)
+    part.CFrame = CFrame.lookAt(mid, mid + upper.CFrame.RightVector, up)
+    part.Anchored = false
+    part.CanCollide = false
+    part.CanQuery = false
+    part.CanTouch = false
+    part.CastShadow = true
+    pcall(function() part.Massless = true end)
+    part.TopSurface = Enum.SurfaceType.Smooth
+    part.BottomSurface = Enum.SurfaceType.Smooth
+    pcall(function() part:SetAttribute("VeniceBaseSize", part.Size / (SIZE.on and SIZE.scale or 1)) end)
+    part.Parent = getFolder()
+
+    local weld = Instance.new("WeldConstraint")
+    weld.Part0 = part
+    weld.Part1 = upper
+    weld.Parent = part
+
+    setHidden(upper, true)
+    setHidden(lower, true)
+    setHidden(foot, true)
+end
+
+local function applyKorblox(char, on)
+    if not char then return end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not hum then return end
+
+    if not on then
+        clearKorblox(char)
+        charMode[char] = nil
+        cmTries[char] = nil
+        return
+    end
+    if korbloxOk(char) then return end
+
+    if hum.RigType == Enum.HumanoidRigType.R6 and charMode[char] ~= "weld" then
+        cmTries[char] = (cmTries[char] or 0) + 1
+        if cmTries[char] > 5 then
+            charMode[char] = "weld"
+            weldMode = true
+        else
+            for _, d in ipairs(char:GetChildren()) do
+                if d:IsA("CharacterMesh") and d.BodyPart == Enum.BodyPart.RightLeg and d.Name ~= "VeniceKorblox" then
+                    savedCharMesh[char] = { mesh = d.MeshId, tex = d.OverlayTextureId }
+                    pcall(function() d:Destroy() end)
+                    break
+                end
+            end
+            local m = Instance.new("CharacterMesh")
+            m.Name = "VeniceKorblox"
+            m.BodyPart = Enum.BodyPart.RightLeg
+            m.MeshId = 101851696
+            m.OverlayTextureId = 101851254
+            m.Parent = char
+            return
+        end
+    end
+
+    local upper, lower, foot = findLegParts(char)
+    if not upper then return end
+    buildKorbloxLeg(char, upper, lower, foot)
+end
+
+local function cleanupParts(list)
+    if not partsFolder or not partsFolder.Parent then return end
+    for _, p in ipairs(partsFolder:GetChildren()) do
+        local w = p:FindFirstChildWhichIsA("WeldConstraint")
+        local alive = false
+        if w then
+            for _, c in ipairs(list) do
+                if (w.Part0 and w.Part0:IsDescendantOf(c)) or (w.Part1 and w.Part1:IsDescendantOf(c)) then
+                    alive = true
+                    break
+                end
+            end
+        end
+        if not alive then pcall(function() p:Destroy() end) end
+    end
+    if meshCache and not meshCache.Parent then meshCache = nil end
+end
 
 -- ============================== аура ==============================
 
@@ -1296,12 +1340,6 @@ local function clearEsp()
     if espContainer then
         for _, o in ipairs(espContainer:GetChildren()) do pcall(function() o:Destroy() end) end
     end
-end
-
-local function rebuildEsp()
-    clearEsp()
-    espContainer = nil
-    if ESP.on then task.spawn(function() pcall(espStep) end) end
 end
 
 local function updateCorners(d, col, cam, root, size)
@@ -1875,7 +1913,7 @@ local function enforce()
     local mine = LP.Character or myChar()
     if mine then
         if AURA.on then pcall(applyAura, mine, true) end
-        if SIZE.on then pcall(applySize, mine, true) end
+        if SIZE.on and not sizeSaved[mine] then pcall(applySize, mine, true) end
     end
 
     pcall(cleanupParts, list)
@@ -1883,6 +1921,7 @@ local function enforce()
     if accCurrent ~= 0 and accState == "ready" and not hasAcc() and os.clock() - accMountAt > 0.4 then
         accMountAt = os.clock()
         pcall(mountAcc)
+        if mine and SIZE.on then pcall(applySize, mine, true) end
     elseif accCurrent ~= 0 and accState == "failed" and os.clock() - accFailAt > 3 then
         loadAccAsync(accCurrent)
     end
@@ -1938,6 +1977,12 @@ local function watchChar(char)
         task.delay(d, enforce)
     end
 
+    if SIZE.on and SIZE.scale ~= 1 then
+        task.delay(0.6, function()
+            if SIZE.on and LP.Character == char then pcall(applySize, char, true) end
+        end)
+    end
+
     if accCurrent ~= 0 and not accTemplate then
         task.delay(0.5, function()
             if accCurrent ~= 0 and not accTemplate and accState ~= "loading" then
@@ -1951,6 +1996,12 @@ local function watchChar(char)
             if d:IsA("BasePart") then
                 hookPart(d)
                 if CONFIG.noclip then pcall(noclipOne, d, true) end
+                if SIZE.on and sizeSaved[char] and not sizeSaved[char].parts[d] then
+                    local f = SIZE.scale
+                    sizeSaved[char].parts[d] = d.Size / f
+                    pcall(function() d.Size = d.Size end)
+                    task.defer(function() if d.Parent then pcall(applySize, char, true) end end)
+                end
             end
             task.defer(enforce)
         end
@@ -1995,7 +2046,11 @@ end
 
 if LP.Character then watchChar(LP.Character) end
 track(LP.CharacterAdded:Connect(watchChar))
-track(LP.CharacterAppearanceLoaded:Connect(enforce))
+track(LP.CharacterAppearanceLoaded:Connect(function()
+    enforce()
+    local c = LP.Character
+    if c and SIZE.on then pcall(applySize, c, true) end
+end))
 
 local lastChar = LP.Character
 task.spawn(function()
@@ -2391,7 +2446,7 @@ local function build()
         local c = LP.Character or myChar()
         if c then pcall(applySize, c, v) end
     end)
-    slider("Масштаб", 0.5, 2.5, SIZE.scale, function(v)
+    slider("Масштаб (рост)", 0.5, 2.5, SIZE.scale, function(v)
         SIZE.scale = v
         if SIZE.on then
             local c = LP.Character or myChar()
@@ -2471,11 +2526,13 @@ local function build()
     local bg = gridBox(1)
     chip(bg, "Полный", function()
         ESP.style = "full"
-        rebuildEsp()
+        clearEsp()
+        if ESP.on then task.spawn(function() pcall(espStep) end) end
     end)
     chip(bg, "Уголки", function()
         ESP.style = "corner"
-        rebuildEsp()
+        clearEsp()
+        if ESP.on then task.spawn(function() pcall(espStep) end) end
     end)
     section("ВИД")
     slider("Толщина", 1, 4, ESP.thickness, function(v) ESP.thickness = v end, 1)
@@ -2499,11 +2556,15 @@ local function build()
     section("АНТИ-ДЕТЕКТ")
     row("Скрытая папка и рандом имён", ESP.stealth, function(v)
         ESP.stealth = v
-        rebuildEsp()
+        clearEsp()
+        espContainer = nil
     end)
     slider("Частота обновления", 0.05, 0.5, ESP.rate, function(v) ESP.rate = v end, 0.01,
         function(v) return string.format("%.2f", v) end)
-    button("Пересобрать ESP", function() rebuildEsp() end)
+    button("Пересобрать ESP", function()
+        clearEsp()
+        if ESP.on then task.spawn(function() pcall(espStep) end) end
+    end)
     if not DrawingLib then
         button("Drawing нет — уголки уйдут в бокс", function() ESP.style = "full" end)
     end
@@ -2626,7 +2687,10 @@ local function build()
         if AURA.on then refreshAura() end
         if SIZE.on then
             local c = LP.Character or myChar()
-            if c then pcall(applySize, c, true) end
+            if c then
+                pcall(applySize, c, false)
+                pcall(applySize, c, true)
+            end
         end
         if ESP.on then pcall(espStep) end
         if SKY.mode ~= "off" then pcall(applySky, SKY.mode) end
@@ -2653,7 +2717,10 @@ local function build()
         print("[Venice] частей в папке:", partsFolder and #partsFolder:GetChildren() or 0)
         print("[Venice] fps:", tostring(FPS.boost), "частицы off:", tostring(FPS.partsOff), "частиц убито:", #killedParts, "эффектов:", #killedFx)
         print("[Venice] FOV:", tostring(fovTarget), "небо:", SKY.mode)
-        print("[Venice] размер:", tostring(SIZE.on), "x" .. tostring(SIZE.scale))
+        local mc = LP.Character and sizeSaved[LP.Character]
+        local np = 0
+        if mc then for _ in pairs(mc.parts) do np = np + 1 end end
+        print("[Venice] размер:", tostring(SIZE.on), "x" .. tostring(SIZE.scale), "зафиксировано частей:", np)
         local espN = 0
         for _ in pairs(espData) do espN = espN + 1 end
         print("[Venice] esp:", tostring(ESP.on), "меток:", espN, "стиль:", ESP.style, "скрытность:", tostring(ESP.stealth),
@@ -2730,7 +2797,7 @@ local function build()
         end
     end)
 
-    print("[Venice] v44 · Z меню")
+    print("[Venice] v45 · Z меню")
 end
 
 pcall(build)
