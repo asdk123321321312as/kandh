@@ -2,7 +2,7 @@ if getgenv().VeniceCos then pcall(function() getgenv().VeniceCos:Destroy() end) 
 if getgenv().VeniceCosConns then
     for _, c in ipairs(getgenv().VeniceCosConns) do pcall(function() c:Disconnect() end) end
 end
-getgenv().VeniceCosConns = {}
+getgenv().VeniceCosConns = {} --пизда
 
 local ref = cloneref or function(s) return s end
 local Players  = ref(game:GetService("Players"))
@@ -24,8 +24,12 @@ local CONFIG = {
     noclip = false,
 }
 local FPS = { boost = false, shadowsOff = false, fxOff = false, partsOff = false, cap = 240 }
-local AURA = { on = false, size = 1, speed = 1, hue = 0, mode = "rainbow", color = Color3.fromRGB(152, 132, 255), style = "both" }
+local AURA = { on = false, size = 1, speed = 1, spin = 1, hue = 0, mode = "rainbow", color = Color3.fromRGB(152, 132, 255), style = "ring" }
 local PROTECT = { parts = true, godHealth = true }
+local ESP = {
+    on = false, box = true, name = true, dist = true, health = true, tracer = true,
+    rainbow = true, color = Color3.fromRGB(152, 132, 255),
+}
 
 local ACCS = {
     { id = 132809431,  name = "Doomsekkar" },
@@ -103,6 +107,17 @@ local function targets()
         if subj then addModel(list, seen, subj.Parent) end
     end
     for _, m in ipairs(scanCache) do addModel(list, seen, m) end
+    return list
+end
+
+local function espTargets()
+    local list, seen = {}, {}
+    for _, pl in ipairs(Players:GetPlayers()) do
+        if pl ~= LP then addModel(list, seen, pl.Character) end
+    end
+    for _, m in ipairs(targets()) do
+        if m ~= LP.Character then addModel(list, seen, m) end
+    end
     return list
 end
 
@@ -764,6 +779,10 @@ end))
 
 local auraChar = nil
 local auraParts = nil
+local auraNodes = {}
+local auraEmitters = {}
+local auraLight = nil
+local auraT = 0
 
 local function rainbow(h) return Color3.fromHSV(h % 1, 1, 1) end
 
@@ -785,6 +804,10 @@ local function auraSeq()
     return ColorSequence.new(AURA.color)
 end
 
+local function kp(t, v)
+    return NumberSequenceKeypoint.new(t, v)
+end
+
 local AURA_COLORS = {
     { name = "Радуга",  mode = "rainbow" },
     { name = "Фиолет",  color = Color3.fromRGB(152, 132, 255) },
@@ -797,8 +820,12 @@ local AURA_COLORS = {
 }
 
 local AURA_STYLES = {
-    { name = "Кольцо", id = "ring" },
-    { name = "Туман",  id = "mist" },
+    { name = "Кольцо",   id = "ring" },
+    { name = "Туман",    id = "mist" },
+    { name = "Орбита",   id = "orbit" },
+    { name = "Спираль",  id = "spiral" },
+    { name = "Мерцание", id = "flicker" },
+    { name = "Пульс",    id = "pulse" },
 }
 
 local function clearAura()
@@ -806,42 +833,49 @@ local function clearAura()
         for _, o in ipairs(auraParts) do pcall(function() o:Destroy() end) end
     end
     auraChar, auraParts = nil, nil
+    auraNodes, auraEmitters = {}, {}
+    auraLight, auraT = nil, 0
 end
 
-local function makeRing(att, made)
+local function baseEmitter()
     local e = Instance.new("ParticleEmitter")
-    e.Name = "VeniceAuraRing"
     e.Texture = "rbxasset://textures/particles/sparkles_main.dds"
+    e.LightEmission = 1
+    e.LightInfluence = 0
+    e.Color = auraSeq()
+    e:SetAttribute("VeniceAura", true)
+    return e
+end
+
+local function makeRing(att, made, rate)
+    local e = baseEmitter()
+    e.Name = "VeniceAuraRing"
     e.Shape = Enum.ParticleEmitterShape.Disc
     e.ShapeStyle = Enum.ParticleEmitterShapeStyle.Surface
     e.ShapePartial = 1
-    e.Rate = 20 * AURA.size
+    e.Rate = rate or (20 * AURA.size)
     e.Lifetime = NumberRange.new(0.6, 1.1)
     e.Speed = NumberRange.new(0.6, 2.2)
     e.Drag = 3
     e.Acceleration = Vector3.new(0, 2.6, 0)
     e.Size = NumberSequence.new({
-        NumberSequenceKeypoint.new(0, 0.5 * AURA.size),
-        NumberSequenceKeypoint.new(0.35, 0.85 * AURA.size),
-        NumberSequenceKeypoint.new(1, 0),
+        kp(0, 0.5 * AURA.size),
+        kp(0.35, 0.85 * AURA.size),
+        kp(1, 0),
     })
     e.Transparency = NumberSequence.new({
-        NumberSequenceKeypoint.new(0, 0.15),
-        NumberSequenceKeypoint.new(1, 1),
+        kp(0, 0.15),
+        kp(1, 1),
     })
-    e.LightEmission = 1
-    e.LightInfluence = 0
     e.RotSpeed = NumberRange.new(-120, 120)
-    e.Color = auraSeq()
-    e:SetAttribute("VeniceAura", true)
     e.Parent = att
     table.insert(made, e)
+    table.insert(auraEmitters, e)
 end
 
 local function makeMist(att, made)
-    local e = Instance.new("ParticleEmitter")
+    local e = baseEmitter()
     e.Name = "VeniceAuraMist"
-    e.Texture = "rbxasset://textures/particles/sparkles_main.dds"
     e.Shape = Enum.ParticleEmitterShape.Sphere
     e.ShapeStyle = Enum.ParticleEmitterShapeStyle.Volume
     e.Rate = 8 * AURA.size
@@ -850,19 +884,65 @@ local function makeMist(att, made)
     e.Drag = 4
     e.Acceleration = Vector3.new(0, 1.1, 0)
     e.Size = NumberSequence.new({
-        NumberSequenceKeypoint.new(0, 1.1 * AURA.size),
-        NumberSequenceKeypoint.new(1, 0),
+        kp(0, 1.1 * AURA.size),
+        kp(1, 0),
     })
     e.Transparency = NumberSequence.new({
-        NumberSequenceKeypoint.new(0, 0.55),
-        NumberSequenceKeypoint.new(1, 1),
+        kp(0, 0.55),
+        kp(1, 1),
     })
-    e.LightEmission = 1
-    e.LightInfluence = 0
-    e.Color = auraSeq()
-    e:SetAttribute("VeniceAura", true)
     e.Parent = att
     table.insert(made, e)
+    table.insert(auraEmitters, e)
+end
+
+local function makeOrbit(root, made)
+    for i = 1, 3 do
+        local a = Instance.new("Attachment")
+        a.Name = "VeniceAuraNode"
+        a:SetAttribute("VeniceAura", true)
+        a.Position = Vector3.new(math.cos(i * 2.09) * 2, 0.4, math.sin(i * 2.09) * 2)
+        a.Parent = root
+        table.insert(made, a)
+        table.insert(auraNodes, a)
+
+        local e = baseEmitter()
+        e.Name = "VeniceAuraOrbit"
+        e.Shape = Enum.ParticleEmitterShape.Sphere
+        e.Rate = 45 * AURA.size
+        e.Lifetime = NumberRange.new(0.25, 0.5)
+        e.Speed = NumberRange.new(0.05, 0.4)
+        e.Drag = 2
+        e.Size = NumberSequence.new({ kp(0, 0.5 * AURA.size), kp(1, 0) })
+        e.Transparency = NumberSequence.new({ kp(0, 0.1), kp(1, 1) })
+        e.RotSpeed = NumberRange.new(-200, 200)
+        e.Parent = a
+        table.insert(made, e)
+        table.insert(auraEmitters, e)
+    end
+end
+
+local function makeSpiral(root, made)
+    local a = Instance.new("Attachment")
+    a.Name = "VeniceAuraNode"
+    a:SetAttribute("VeniceAura", true)
+    a.Parent = root
+    table.insert(made, a)
+    table.insert(auraNodes, a)
+
+    local e = baseEmitter()
+    e.Name = "VeniceAuraSpiral"
+    e.Shape = Enum.ParticleEmitterShape.Sphere
+    e.Rate = 40 * AURA.size
+    e.Lifetime = NumberRange.new(0.4, 0.8)
+    e.Speed = NumberRange.new(0.1, 0.5)
+    e.Drag = 1.5
+    e.Size = NumberSequence.new({ kp(0, 0.55 * AURA.size), kp(1, 0) })
+    e.Transparency = NumberSequence.new({ kp(0, 0.1), kp(1, 1) })
+    e.RotSpeed = NumberRange.new(-260, 260)
+    e.Parent = a
+    table.insert(made, e)
+    table.insert(auraEmitters, e)
 end
 
 local function applyAura(char, on)
@@ -879,11 +959,20 @@ local function applyAura(char, on)
         local att = Instance.new("Attachment")
         att.Name = "VeniceAuraAtt"
         att.Orientation = Vector3.new(-90, 0, 0)
+        att:SetAttribute("VeniceAura", true)
         att.Parent = root
         table.insert(made, att)
 
-        if AURA.style == "mist" then
+        if AURA.style == "orbit" then
+            makeOrbit(root, made)
+        elseif AURA.style == "spiral" then
+            makeSpiral(root, made)
+        elseif AURA.style == "mist" then
             makeMist(att, made)
+        elseif AURA.style == "flicker" then
+            makeRing(att, made, 0)
+        elseif AURA.style == "pulse" then
+            makeRing(att, made, 14 * AURA.size)
         else
             makeRing(att, made)
         end
@@ -891,10 +980,11 @@ local function applyAura(char, on)
         local light = Instance.new("PointLight")
         light.Name = "VeniceAuraLight"
         light.Brightness = 2
-        light.Range = 12
+        light.Range = 12 * AURA.size
         light.Color = auraColor()
         light.Parent = att
         table.insert(made, light)
+        auraLight = light
 
         local hl = Instance.new("Highlight")
         hl.Name = "VeniceAuraHL"
@@ -913,6 +1003,47 @@ local function applyAura(char, on)
         auraParts = made
     else
         for _, o in ipairs(made) do pcall(function() o:Destroy() end) end
+        auraNodes, auraEmitters, auraLight = {}, {}, nil
+    end
+end
+
+local function updateAuraStyle(dt)
+    auraT = auraT + dt
+    if AURA.style == "orbit" then
+        local r = 2.1 * AURA.size
+        local y = 0.4 + math.sin(auraT * 2) * 0.3 * AURA.size
+        for i, a in ipairs(auraNodes) do
+            if a.Parent then
+                local ang = auraT * 2.2 * AURA.spin + (i - 1) * (math.pi * 2 / 3)
+                a.Position = Vector3.new(math.cos(ang) * r, y, math.sin(ang) * r)
+            end
+        end
+    elseif AURA.style == "spiral" then
+        local frac = (auraT * 0.45 * AURA.spin) % 1
+        local r = (1 - frac) * 2.4 * AURA.size
+        local ang = frac * math.pi * 6
+        local a = auraNodes[1]
+        if a and a.Parent then
+            a.Position = Vector3.new(math.cos(ang) * r, frac * 4.2 * AURA.size - 0.4, math.sin(ang) * r)
+        end
+    elseif AURA.style == "flicker" then
+        local e = auraEmitters[1]
+        if e then
+            if math.random() < 0.2 then
+                e.Rate = (50 + math.random() * 80) * AURA.size
+                pcall(function() e:Emit(math.random(1, 4)) end)
+            else
+                e.Rate = 0
+            end
+        end
+        if auraLight then
+            auraLight.Brightness = math.random() < 0.35 and (3 + math.random() * 3) or 0.4
+        end
+    elseif AURA.style == "pulse" then
+        local s = (math.sin(auraT * 3 * AURA.speed) + 1) / 2
+        local e = auraEmitters[1]
+        if e then e.Rate = (5 + 45 * s) * AURA.size end
+        if auraLight then auraLight.Brightness = 1 + s * 3 end
     end
 end
 
@@ -927,12 +1058,13 @@ end
 task.spawn(function()
     local last = os.clock()
     while true do
-        task.wait(0.08)
+        task.wait(0.05)
         local now = os.clock()
         local dt = now - last
         last = now
         if auraChar and not auraChar.Parent then clearAura() end
         if AURA.on and auraChar and auraParts then
+            pcall(updateAuraStyle, dt)
             if AURA.mode == "rainbow" then
                 AURA.hue = (AURA.hue + dt * 0.22 * AURA.speed) % 1
                 local c = rainbow(AURA.hue)
@@ -948,6 +1080,220 @@ task.spawn(function()
                     end
                 end
             end
+        end
+    end
+end)
+
+-- ============================== esp ==============================
+
+local espFolder = nil
+local espData = setmetatable({}, { __mode = "k" })
+local espHue = 0
+local DrawingLib = nil
+pcall(function()
+    if Drawing and Drawing.new then DrawingLib = Drawing end
+end)
+
+local function espColor(i)
+    if ESP.rainbow then return Color3.fromHSV((espHue + (i or 0) * 0.13) % 1, 0.85, 1) end
+    return ESP.color
+end
+
+local function getEspFolder()
+    if espFolder and espFolder.Parent then return espFolder end
+    local f = WS:FindFirstChild("VeniceEsp")
+    if not f then
+        f = Instance.new("Folder")
+        f.Name = "VeniceEsp"
+        f.Archivable = false
+        f.Parent = WS
+    end
+    espFolder = f
+    return f
+end
+
+local function makeEsp(char, i)
+    local head = char:FindFirstChild("Head")
+    local root = char:FindFirstChild("HumanoidRootPart") or head
+    if not root then return nil end
+
+    local d = { root = root, head = head }
+    local col = espColor(i)
+
+    local box = Instance.new("BoxHandleAdornment")
+    box.Name = "VeniceEspBox"
+    box.Adornee = root
+    box.Size = Vector3.new(4, 5.5, 1.2)
+    box.AlwaysOnTop = true
+    box.ZIndex = 5
+    box.Transparency = 0.35
+    box.Color3 = col
+    box.Parent = getEspFolder()
+    d.box = box
+
+    if head then
+        local bb = Instance.new("BillboardGui")
+        bb.Name = "VeniceEspTag"
+        bb.AlwaysOnTop = true
+        bb.Size = UDim2.fromOffset(170, 42)
+        bb.StudsOffset = Vector3.new(0, 2.6, 0)
+        bb.MaxDistance = 800
+        bb.Parent = head
+        d.bb = bb
+
+        local nm = Instance.new("TextLabel")
+        nm.Size = UDim2.new(1, 0, 0, 16)
+        nm.BackgroundTransparency = 1
+        nm.Font = Enum.Font.GothamBold
+        nm.TextSize = 12
+        nm.TextColor3 = col
+        nm.TextStrokeTransparency = 0.4
+        nm.Text = char.Name
+        nm.Parent = bb
+        d.name = nm
+
+        local ds = Instance.new("TextLabel")
+        ds.Size = UDim2.new(1, 0, 0, 13)
+        ds.Position = UDim2.fromOffset(0, 16)
+        ds.BackgroundTransparency = 1
+        ds.Font = Enum.Font.GothamMedium
+        ds.TextSize = 10
+        ds.TextColor3 = Color3.fromRGB(220, 220, 230)
+        ds.TextStrokeTransparency = 0.5
+        ds.Text = ""
+        ds.Parent = bb
+        d.dist = ds
+
+        local hb = Instance.new("Frame")
+        hb.Size = UDim2.new(1, -30, 0, 3)
+        hb.Position = UDim2.new(0, 15, 1, -7)
+        hb.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
+        hb.BorderSizePixel = 0
+        hb.Parent = bb
+        d.hpBg = hb
+
+        local hf = Instance.new("Frame")
+        hf.Size = UDim2.fromScale(1, 1)
+        hf.BackgroundColor3 = OKC
+        hf.BorderSizePixel = 0
+        hf.Parent = hb
+        d.hpFill = hf
+    end
+
+    if DrawingLib then
+        local line = DrawingLib.new("Line")
+        line.Thickness = 1
+        line.Transparency = 0.45
+        line.Color = col
+        line.Visible = false
+        d.line = line
+    end
+
+    return d
+end
+
+local function destroyEsp(char)
+    local d = espData[char]
+    if not d then return end
+    espData[char] = nil
+    if d.box then pcall(function() d.box:Destroy() end) end
+    if d.bb then pcall(function() d.bb:Destroy() end) end
+    if d.line then pcall(function() d.line:Remove() end) end
+end
+
+local function clearEsp()
+    for char in pairs(espData) do destroyEsp(char) end
+    if espFolder then
+        for _, o in ipairs(espFolder:GetChildren()) do pcall(function() o:Destroy() end) end
+    end
+end
+
+local function espStep()
+    local cam = WS.CurrentCamera
+    local list = espTargets()
+    local alive = {}
+
+    for i, char in ipairs(list) do
+        alive[char] = true
+        local head = char:FindFirstChild("Head")
+        local root = char:FindFirstChild("HumanoidRootPart") or head
+        local hum = char:FindFirstChildOfClass("Humanoid")
+
+        local d = espData[char]
+        if not d or d.root ~= root or not d.root.Parent then
+            if d then destroyEsp(char) end
+            d = makeEsp(char, i)
+            if d then espData[char] = d end
+        end
+
+        if d then
+            local col = espColor(i)
+            if d.box then
+                d.box.Color3 = col
+                d.box.Visible = ESP.box
+                local ok, _, size = pcall(function() return char:GetBoundingBox() end)
+                if ok and size then
+                    d.box.Size = Vector3.new(math.max(size.X, 1), math.max(size.Y, 1), math.max(size.Z, 1))
+                end
+            end
+
+            if d.bb then
+                d.bb.Enabled = ESP.name or ESP.dist or ESP.health
+                if d.name then
+                    d.name.Visible = ESP.name
+                    d.name.TextColor3 = col
+                    d.name.Text = char.Name
+                end
+                if d.dist then
+                    d.dist.Visible = ESP.dist
+                    if cam and root then
+                        d.dist.Text = string.format("[%dm]", math.floor((root.Position - cam.CFrame.Position).Magnitude))
+                    end
+                end
+                if d.hpBg and d.hpFill then
+                    local show = ESP.health and hum
+                    d.hpBg.Visible = show and true or false
+                    if show then
+                        local r = math.clamp(hum.Health / math.max(hum.MaxHealth, 1), 0, 1)
+                        d.hpFill.Size = UDim2.fromScale(r, 1)
+                        d.hpFill.BackgroundColor3 = Color3.fromRGB(
+                            math.floor(255 * (1 - r) + 120 * r),
+                            math.floor(60 + 160 * r),
+                            90
+                        )
+                    end
+                end
+            end
+
+            if d.line then
+                if ESP.tracer and cam and root then
+                    local sp, onScreen = cam:WorldToViewportPoint(root.Position)
+                    if onScreen and sp.Z > 0 then
+                        d.line.Visible = true
+                        d.line.Color = col
+                        d.line.From = Vector2.new(cam.ViewportSize.X / 2, cam.ViewportSize.Y)
+                        d.line.To = Vector2.new(sp.X, sp.Y)
+                    else
+                        d.line.Visible = false
+                    end
+                else
+                    d.line.Visible = false
+                end
+            end
+        end
+    end
+
+    for char in pairs(espData) do
+        if not alive[char] then destroyEsp(char) end
+    end
+end
+
+task.spawn(function()
+    while true do
+        task.wait(0.12)
+        if ESP.on then
+            espHue = (espHue + 0.006) % 1
+            pcall(espStep)
         end
     end
 end)
@@ -1323,8 +1669,10 @@ task.spawn(function()
     while true do
         task.wait(2)
         if FPS.boost then
-            for _, d in ipairs(killedParts) do
-                if d.Parent and d.Enabled then pcall(function() d.Enabled = false end) end
+            if FPS.partsOff then
+                for _, d in ipairs(killedParts) do
+                    if d.Parent and d.Enabled then pcall(function() d.Enabled = false end) end
+                end
             end
             for _, d in ipairs(killedFx) do
                 if d.Parent and d.Enabled then pcall(function() d.Enabled = false end) end
@@ -1506,7 +1854,7 @@ end))
 
 local gui, panel, open = nil, nil, false
 local pages, tabBtns, activeTab = {}, {}, nil
-local setHeadless, setKorblox, setForce, setBoost, setInf, setAura, setNoClip
+local setHeadless, setKorblox, setForce, setBoost, setInf, setAura, setNoClip, setEsp
 
 local function tw(o, t, p) TweenS:Create(o, TweenInfo.new(t), p):Play() end
 
@@ -1749,6 +2097,7 @@ end
 local TABS = {
     { id = "look", label = "Внешка" },
     { id = "aura", label = "Аура" },
+    { id = "esp",  label = "ESP" },
     { id = "head", label = "Голова" },
     { id = "move", label = "Движение" },
     { id = "cam",  label = "Камера" },
@@ -1769,7 +2118,7 @@ local function build()
 
     local shell = Instance.new("Frame")
     shell.Position = UDim2.fromOffset(20, 70)
-    shell.Size = UDim2.fromOffset(480, 330)
+    shell.Size = UDim2.fromOffset(500, 340)
     shell.BackgroundColor3 = BG
     shell.BackgroundTransparency = 0.05
     shell.BorderSizePixel = 0
@@ -1816,7 +2165,7 @@ local function build()
 
     for i, t in ipairs(TABS) do
         local b = Instance.new("TextButton")
-        b.Size = UDim2.fromOffset(52, 22)
+        b.Size = UDim2.fromOffset(46, 22)
         b.LayoutOrder = i
         b.BackgroundColor3 = ROW
         b.BorderSizePixel = 0
@@ -1876,7 +2225,7 @@ local function build()
         end, c.color)
     end
     section("СТИЛЬ")
-    local sg = gridBox(1)
+    local sg = gridBox(2)
     for _, s in ipairs(AURA_STYLES) do
         chip(sg, s.name, function()
             AURA.style = s.id
@@ -1900,9 +2249,44 @@ local function build()
     slider("Скорость цвета", 0.1, 3, AURA.speed, function(v)
         AURA.speed = v
     end, 0.1, function(v) return string.format("%.1f", v) end)
+    slider("Скорость вращения", 0.1, 4, AURA.spin, function(v)
+        AURA.spin = v
+    end, 0.1, function(v) return string.format("%.1f", v) end)
     button("Убрать ауру", function()
         if setAura then setAura(false) end
     end)
+
+    panel = pages.esp
+    section("ESP")
+    setEsp = row("ESP вкл", ESP.on, function(v)
+        ESP.on = v
+        if v then
+            task.spawn(function() pcall(espStep) end)
+        else
+            clearEsp()
+        end
+    end)
+    row("Бокс", ESP.box, function(v) ESP.box = v end, 26)
+    row("Имя", ESP.name, function(v) ESP.name = v end, 26)
+    row("Дистанция", ESP.dist, function(v) ESP.dist = v end, 26)
+    row("Здоровье", ESP.health, function(v) ESP.health = v end, 26)
+    row("Линии от низа экрана", ESP.tracer, function(v) ESP.tracer = v end, 26)
+    section("ЦВЕТ ESP")
+    local eg = gridBox(2)
+    for _, c in ipairs(AURA_COLORS) do
+        chip(eg, c.name, function()
+            if c.mode == "rainbow" then
+                ESP.rainbow = true
+            else
+                ESP.rainbow = false
+                ESP.color = c.color
+            end
+        end, c.color)
+    end)
+    if not DrawingLib then
+        section("ЛИНИИ")
+        button("Drawing недоступен — линии выключены", function() ESP.tracer = false end)
+    end
 
     panel = pages.head
     section("АКСЕССУАРЫ")
@@ -1967,7 +2351,7 @@ local function build()
     section("FPS")
     setBoost = row("FPS Boost", FPS.boost, function(v)
         FPS.boost = v
-        if v then FPS.shadowsOff, FPS.fxOff, FPS.partsOff = true, true, true end
+        if v then FPS.shadowsOff, FPS.fxOff = true, true end
         syncFps()
     end)
     row("Тени off", FPS.shadowsOff, function(v)
@@ -2020,6 +2404,7 @@ local function build()
         syncFps()
         if PROTECT.parts then pcall(scanHazards) end
         if AURA.on then refreshAura() end
+        if ESP.on then pcall(espStep) end
         if SKY.mode ~= "off" then pcall(applySky, SKY.mode) end
 
         for _ = 1, 6 do
@@ -2042,8 +2427,11 @@ local function build()
         print("[Venice] защита частей:", tostring(PROTECT.parts), "здоровье:", tostring(PROTECT.godHealth))
         print("[Venice] ноклип:", tostring(CONFIG.noclip), "частей под ноклипом:", #noclipSaved)
         print("[Venice] частей в папке:", partsFolder and #partsFolder:GetChildren() or 0)
-        print("[Venice] fps:", tostring(FPS.boost), "частиц убито:", #killedParts, "эффектов:", #killedFx)
+        print("[Venice] fps:", tostring(FPS.boost), "частицы off:", tostring(FPS.partsOff), "частиц убито:", #killedParts, "эффектов:", #killedFx)
         print("[Venice] FOV:", tostring(fovTarget), "небо:", SKY.mode)
+        local espN = 0
+        for _ in pairs(espData) do espN = espN + 1 end
+        print("[Venice] esp:", tostring(ESP.on), "меток:", espN, "Drawing:", DrawingLib and "есть" or "нет")
     end)
     button("Убрать всё", function()
         CONFIG.headless, CONFIG.korblox, CONFIG.force = false, false, false
@@ -2052,6 +2440,7 @@ local function build()
         AURA.on = false
         PROTECT.parts = false
         PROTECT.godHealth = false
+        ESP.on = false
         accCurrent = 0
         accTemplate = nil
         accState = "idle"
@@ -2063,6 +2452,7 @@ local function build()
         if setInf then setInf(false) end
         if setAura then setAura(false) end
         if setNoClip then setNoClip(false) end
+        if setEsp then setEsp(false) end
         pcall(restoreNoclip)
         pcall(clearHazards)
         syncFps()
@@ -2072,6 +2462,7 @@ local function build()
         end
         pcall(clearAura)
         pcall(clearAcc)
+        pcall(clearEsp)
         pcall(applySky, "off")
         fovTarget = 70
         pcall(applyFov)
@@ -2102,13 +2493,14 @@ local function build()
         pcall(function() RunS:UnbindFromRenderStep("VeniceEnforce") end)
         pcall(function() CAS:UnbindAction("VeniceMenu") end)
         pcall(clearAura)
+        pcall(clearEsp)
         pcall(restoreNoclip)
         if partsFolder then
             for _, o in ipairs(partsFolder:GetChildren()) do pcall(function() o:Destroy() end) end
         end
     end)
 
-    print("[Venice] v41 · Z меню")
+    print("[Venice] v42 · Z меню")
 end
 
 build()
