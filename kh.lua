@@ -28,9 +28,12 @@ local CONFIG = {
 local FPS = { boost = false, shadowsOff = false, fxOff = false, partsOff = false, cap = 240 }
 local AURA = { on = false, size = 1, speed = 1, spin = 1, hue = 0, mode = "rainbow", color = Color3.fromRGB(152, 132, 255), style = "ring" }
 local PROTECT = { parts = true, godHealth = true }
+local SIZE = { on = false, scale = 1 }
 local ESP = {
     on = false, box = true, name = true, dist = true, health = true, tracer = true,
     rainbow = true, color = Color3.fromRGB(152, 132, 255),
+    style = "full", textSize = 12, thickness = 1, maxDist = 500,
+    transparency = 0.35, outline = true, rate = 0.12, stealth = true,
 }
 
 local ACCS = {
@@ -56,10 +59,28 @@ local OKC    = Color3.fromRGB(120, 220, 160)
 
 if type(setthreadidentity) == "function" then pcall(setthreadidentity, 7) end
 
+local RNDC = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+local function rnd(n)
+    local s = ""
+    for _ = 1, (n or 8) do
+        local k = math.random(1, #RNDC)
+        s = s .. RNDC:sub(k, k)
+    end
+    return s
+end
+
+local function hiddenParent()
+    if type(gethui) == "function" then
+        local h = gethui()
+        if h then return h end
+    end
+    return game:GetService("CoreGui")
+end
+
 local function stealthGui(g)
-    local h = (type(gethui) == "function") and gethui() or nil
     local prot = protectgui or protect_gui or (syn and syn.protect_gui)
     if type(prot) == "function" then pcall(prot, g) end
+    local h = (type(gethui) == "function") and gethui() or nil
     if h then if pcall(function() g.Parent = h end) then return true end end
     return pcall(function() g.Parent = game:GetService("CoreGui") end)
 end
@@ -615,6 +636,74 @@ local function cleanupParts(list)
     if meshCache and not meshCache.Parent then meshCache = nil end
 end
 
+-- ============================== размер персонажа (клиент) ==============================
+
+local sizeSaved = setmetatable({}, { __mode = "k" })
+local R15_PROPS = { "BodyHeightScale", "BodyWidthScale", "BodyDepthScale", "HeadScale" }
+
+local function scaleKorbloxLegs(char, f)
+    if not partsFolder then return end
+    for _, p in ipairs(partsFolder:GetChildren()) do
+        if p.Name == "VeniceKorbloxLeg" then
+            local w = p:FindFirstChildWhichIsA("WeldConstraint")
+            if w and w.Part1 and w.Part1:IsDescendantOf(char) then
+                local base = p:GetAttribute("VeniceBaseSize")
+                if not base then
+                    pcall(function() p:SetAttribute("VeniceBaseSize", p.Size) end)
+                    base = p.Size
+                end
+                pcall(function() p.Size = base * f end)
+            end
+        end
+    end
+end
+
+local function applySize(char, on)
+    if not char then return end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not hum then return end
+
+    if not on then
+        local s = sizeSaved[char]
+        if s then
+            sizeSaved[char] = nil
+            if s.meshes then
+                for m, v in pairs(s.meshes) do pcall(function() m.Scale = v end) end
+            end
+            if s.hum then
+                for prop, v in pairs(s.hum) do pcall(function() hum[prop] = v end) end
+            end
+        end
+        scaleKorbloxLegs(char, 1)
+        return
+    end
+
+    local f = SIZE.scale
+    local s = sizeSaved[char]
+    if not s then
+        s = { meshes = {}, hum = {} }
+        sizeSaved[char] = s
+        for _, prop in ipairs(R15_PROPS) do
+            pcall(function() s.hum[prop] = hum[prop] end)
+        end
+        for _, d in ipairs(char:GetDescendants()) do
+            if d:IsA("SpecialMesh") then s.meshes[d] = d.Scale end
+        end
+    end
+
+    if hum.RigType == Enum.HumanoidRigType.R15 then
+        for _, prop in ipairs(R15_PROPS) do
+            local base = s.hum[prop]
+            if base then pcall(function() hum[prop] = base * f end) end
+        end
+    else
+        for m, base in pairs(s.meshes) do
+            if m.Parent then pcall(function() m.Scale = base * f end) end
+        end
+    end
+    scaleKorbloxLegs(char, f)
+end
+
 -- ============================== ноклип ==============================
 
 local noclipSaved = {}
@@ -1072,7 +1161,7 @@ end)
 
 -- ============================== esp ==============================
 
-local espFolder = nil
+local espContainer = nil
 local espData = setmetatable({}, { __mode = "k" })
 local espHue = 0
 local DrawingLib = nil
@@ -1085,17 +1174,26 @@ local function espColor(i)
     return ESP.color
 end
 
-local function getEspFolder()
-    if espFolder and espFolder.Parent then return espFolder end
-    local f = WS:FindFirstChild("VeniceEsp")
-    if not f then
-        f = Instance.new("Folder")
-        f.Name = "VeniceEsp"
-        f.Archivable = false
+local function getEspContainer()
+    if espContainer and espContainer.Parent then return espContainer end
+    local f = Instance.new("Folder")
+    f.Name = ESP.stealth and rnd(10) or "VeniceEsp"
+    f.Archivable = false
+    local target = ESP.stealth and hiddenParent() or WS
+    if not pcall(function() f.Parent = target end) then
         f.Parent = WS
     end
-    espFolder = f
+    espContainer = f
     return f
+end
+
+local function newLine(col)
+    local l = DrawingLib.new("Line")
+    l.Thickness = ESP.thickness
+    l.Transparency = ESP.transparency * 0.6
+    l.Color = col
+    l.Visible = false
+    return l
 end
 
 local function makeEsp(char, i)
@@ -1103,56 +1201,64 @@ local function makeEsp(char, i)
     local root = char:FindFirstChild("HumanoidRootPart") or head
     if not root then return nil end
 
-    local d = { root = root, head = head }
+    local d = { root = root, head = head, style = ESP.style }
     local col = espColor(i)
+    local container = getEspContainer()
 
-    local box = Instance.new("BoxHandleAdornment")
-    box.Name = "VeniceEspBox"
-    box.Adornee = root
-    box.Size = Vector3.new(4, 5.5, 1.2)
-    box.AlwaysOnTop = true
-    box.ZIndex = 5
-    box.Transparency = 0.35
-    box.Color3 = col
-    box.Parent = getEspFolder()
-    d.box = box
+    if ESP.box then
+        if ESP.style == "corner" and DrawingLib then
+            d.corners = {}
+            for k = 1, 8 do table.insert(d.corners, newLine(col)) end
+        else
+            local box = Instance.new("BoxHandleAdornment")
+            box.Name = ESP.stealth and rnd(8) or "VeniceEspBox"
+            box.Adornee = root
+            box.Size = Vector3.new(4, 5.5, 1.2)
+            box.AlwaysOnTop = true
+            box.ZIndex = 5
+            box.Transparency = ESP.transparency
+            box.Color3 = col
+            box.Archivable = false
+            box.Parent = container
+            d.box = box
+        end
+    end
 
     if head then
         local bb = Instance.new("BillboardGui")
-        bb.Name = "VeniceEspTag"
+        bb.Name = ESP.stealth and rnd(8) or "VeniceEspTag"
         bb.AlwaysOnTop = true
-        bb.Size = UDim2.fromOffset(170, 42)
-        bb.StudsOffset = Vector3.new(0, 2.6, 0)
-        bb.MaxDistance = 800
-        bb.Parent = head
+        bb.Adornee = head
+        bb.MaxDistance = ESP.maxDist
+        bb.LightInfluence = 0
+        bb.Archivable = false
+        bb.Parent = container
         d.bb = bb
 
         local nm = Instance.new("TextLabel")
         nm.Size = UDim2.new(1, 0, 0, 16)
         nm.BackgroundTransparency = 1
         nm.Font = Enum.Font.GothamBold
-        nm.TextSize = 12
+        nm.TextSize = ESP.textSize
         nm.TextColor3 = col
-        nm.TextStrokeTransparency = 0.4
+        nm.TextStrokeTransparency = ESP.outline and 0.4 or 1
         nm.Text = char.Name
         nm.Parent = bb
         d.name = nm
 
         local ds = Instance.new("TextLabel")
         ds.Size = UDim2.new(1, 0, 0, 13)
-        ds.Position = UDim2.fromOffset(0, 16)
         ds.BackgroundTransparency = 1
         ds.Font = Enum.Font.GothamMedium
-        ds.TextSize = 10
+        ds.TextSize = math.max(8, ESP.textSize - 2)
         ds.TextColor3 = Color3.fromRGB(220, 220, 230)
-        ds.TextStrokeTransparency = 0.5
+        ds.TextStrokeTransparency = ESP.outline and 0.5 or 1
         ds.Text = ""
         ds.Parent = bb
         d.dist = ds
 
         local hb = Instance.new("Frame")
         hb.Size = UDim2.new(1, -30, 0, 3)
-        hb.Position = UDim2.new(0, 15, 1, -7)
         hb.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
         hb.BorderSizePixel = 0
         hb.Parent = bb
@@ -1167,12 +1273,7 @@ local function makeEsp(char, i)
     end
 
     if DrawingLib then
-        local line = DrawingLib.new("Line")
-        line.Thickness = 1
-        line.Transparency = 0.45
-        line.Color = col
-        line.Visible = false
-        d.line = line
+        d.line = newLine(col)
     end
 
     return d
@@ -1184,18 +1285,76 @@ local function destroyEsp(char)
     espData[char] = nil
     if d.box then pcall(function() d.box:Destroy() end) end
     if d.bb then pcall(function() d.bb:Destroy() end) end
+    if d.corners then
+        for _, l in ipairs(d.corners) do pcall(function() l:Remove() end) end
+    end
     if d.line then pcall(function() d.line:Remove() end) end
 end
 
 local function clearEsp()
     for char in pairs(espData) do destroyEsp(char) end
-    if espFolder then
-        for _, o in ipairs(espFolder:GetChildren()) do pcall(function() o:Destroy() end) end
+    if espContainer then
+        for _, o in ipairs(espContainer:GetChildren()) do pcall(function() o:Destroy() end) end
+    end
+end
+
+local function rebuildEsp()
+    clearEsp()
+    espContainer = nil
+    if ESP.on then task.spawn(function() pcall(espStep) end) end
+end
+
+local function updateCorners(d, col, cam, root, size)
+    if not d.corners then return end
+    local hide = not ESP.box or ESP.style ~= "corner" or not cam or not root
+    if hide then
+        for _, l in ipairs(d.corners) do l.Visible = false end
+        return
+    end
+
+    local topSp, topOn = cam:WorldToViewportPoint(root.Position + Vector3.new(0, size.Y / 2, 0))
+    local botSp, botOn = cam:WorldToViewportPoint(root.Position - Vector3.new(0, size.Y / 2, 0))
+    if not (topOn and botOn and topSp.Z > 0 and botSp.Z > 0) then
+        for _, l in ipairs(d.corners) do l.Visible = false end
+        return
+    end
+
+    local h = math.abs(botSp.Y - topSp.Y)
+    if h < 4 then
+        for _, l in ipairs(d.corners) do l.Visible = false end
+        return
+    end
+
+    local w = h * math.clamp(size.X / math.max(size.Y, 0.1), 0.35, 1.1)
+    local cx = (topSp.X + botSp.X) / 2
+    local cy = (topSp.Y + botSp.Y) / 2
+    local len = math.max(3, math.min(w, h) * 0.22)
+    local left, right = cx - w / 2, cx + w / 2
+    local top, bottom = cy - h / 2, cy + h / 2
+
+    local segs = {
+        { left, top, left + len, top }, { left, top, left, top + len },
+        { right, top, right - len, top }, { right, top, right, top + len },
+        { left, bottom, left + len, bottom }, { left, bottom, left, bottom - len },
+        { right, bottom, right - len, bottom }, { right, bottom, right, bottom - len },
+    }
+
+    for i, s in ipairs(segs) do
+        local l = d.corners[i]
+        if l then
+            l.From = Vector2.new(s[1], s[2])
+            l.To = Vector2.new(s[3], s[4])
+            l.Color = col
+            l.Thickness = ESP.thickness
+            l.Transparency = ESP.transparency * 0.6
+            l.Visible = true
+        end
     end
 end
 
 local function espStep()
     local cam = WS.CurrentCamera
+    local camPos = cam and cam.CFrame.Position or Vector3.zero
     local list = espTargets()
     local alive = {}
 
@@ -1205,8 +1364,11 @@ local function espStep()
         local root = char:FindFirstChild("HumanoidRootPart") or head
         local hum = char:FindFirstChildOfClass("Humanoid")
 
+        local dist = root and (root.Position - camPos).Magnitude or 0
+        local tooFar = dist > ESP.maxDist
+
         local d = espData[char]
-        if not d or d.root ~= root or not d.root.Parent then
+        if not d or d.root ~= root or not d.root.Parent or d.style ~= ESP.style then
             if d then destroyEsp(char) end
             d = makeEsp(char, i)
             if d then espData[char] = d end
@@ -1214,49 +1376,71 @@ local function espStep()
 
         if d then
             local col = espColor(i)
+            local okB, _, size = pcall(function() return char:GetBoundingBox() end)
+            if not (okB and size) then size = Vector3.new(4, 5.5, 1.2) end
+
+            local show = not tooFar
+            local boxOn = show and ESP.box
             if d.box then
                 d.box.Color3 = col
-                d.box.Visible = ESP.box
-                local ok, _, size = pcall(function() return char:GetBoundingBox() end)
-                if ok and size then
+                d.box.Transparency = ESP.transparency
+                d.box.Visible = boxOn
+                if boxOn then
                     d.box.Size = Vector3.new(math.max(size.X, 1), math.max(size.Y, 1), math.max(size.Z, 1))
+                end
+            end
+            if d.corners then
+                if boxOn then
+                    updateCorners(d, col, cam, root, size)
+                else
+                    for _, l in ipairs(d.corners) do l.Visible = false end
                 end
             end
 
             if d.bb then
-                d.bb.Enabled = ESP.name or ESP.dist or ESP.health
-                if d.name then
-                    d.name.Visible = ESP.name
-                    d.name.TextColor3 = col
-                    d.name.Text = char.Name
-                end
-                if d.dist then
-                    d.dist.Visible = ESP.dist
-                    if cam and root then
-                        d.dist.Text = string.format("[%dm]", math.floor((root.Position - cam.CFrame.Position).Magnitude))
+                local tagOn = show and (ESP.name or ESP.dist or ESP.health)
+                d.bb.Enabled = tagOn
+                if tagOn then
+                    local hh = 18 + ESP.textSize * 2.2
+                    d.bb.Size = UDim2.fromOffset(70 + ESP.textSize * 9, hh)
+                    d.bb.StudsOffset = Vector3.new(0, math.max(size.Y / 2 + 0.7, 2.2), 0)
+                    if d.name then
+                        d.name.Visible = ESP.name
+                        d.name.TextColor3 = col
+                        d.name.TextSize = ESP.textSize
+                        d.name.TextStrokeTransparency = ESP.outline and 0.4 or 1
+                        d.name.Text = char.Name
                     end
-                end
-                if d.hpBg and d.hpFill then
-                    local show = (ESP.health and hum) and true or false
-                    d.hpBg.Visible = show
-                    if show then
-                        local r = math.clamp(hum.Health / math.max(hum.MaxHealth, 1), 0, 1)
-                        d.hpFill.Size = UDim2.fromScale(r, 1)
-                        d.hpFill.BackgroundColor3 = Color3.fromRGB(
-                            math.floor(255 * (1 - r) + 120 * r),
-                            math.floor(60 + 160 * r),
-                            90
-                        )
+                    if d.dist then
+                        d.dist.Visible = ESP.dist
+                        d.dist.TextSize = math.max(8, ESP.textSize - 2)
+                        d.dist.TextStrokeTransparency = ESP.outline and 0.5 or 1
+                        d.dist.Text = string.format("[%dm]", math.floor(dist))
+                    end
+                    if d.hpBg and d.hpFill then
+                        local showHp = (ESP.health and hum) and true or false
+                        d.hpBg.Visible = showHp
+                        if showHp then
+                            local r = math.clamp(hum.Health / math.max(hum.MaxHealth, 1), 0, 1)
+                            d.hpFill.Size = UDim2.fromScale(r, 1)
+                            d.hpFill.BackgroundColor3 = Color3.fromRGB(
+                                math.floor(255 * (1 - r) + 120 * r),
+                                math.floor(60 + 160 * r),
+                                90
+                            )
+                        end
                     end
                 end
             end
 
             if d.line then
-                if ESP.tracer and cam and root then
+                if show and ESP.tracer and cam and root then
                     local sp, onScreen = cam:WorldToViewportPoint(root.Position)
                     if onScreen and sp.Z > 0 then
                         d.line.Visible = true
                         d.line.Color = col
+                        d.line.Thickness = ESP.thickness
+                        d.line.Transparency = ESP.transparency * 0.9
                         d.line.From = Vector2.new(cam.ViewportSize.X / 2, cam.ViewportSize.Y)
                         d.line.To = Vector2.new(sp.X, sp.Y)
                     else
@@ -1276,7 +1460,8 @@ end
 
 task.spawn(function()
     while true do
-        task.wait(0.12)
+        local r = ESP.rate or 0.12
+        task.wait(r + (ESP.stealth and math.random() * r * 0.6 or 0))
         if ESP.on then
             espHue = (espHue + 0.006) % 1
             pcall(espStep)
@@ -1688,7 +1873,10 @@ local function enforce()
     end
 
     local mine = LP.Character or myChar()
-    if mine and AURA.on then pcall(applyAura, mine, true) end
+    if mine then
+        if AURA.on then pcall(applyAura, mine, true) end
+        if SIZE.on then pcall(applySize, mine, true) end
+    end
 
     pcall(cleanupParts, list)
 
@@ -1740,6 +1928,7 @@ local function watchChar(char)
     meshCache = nil
     cmTries[char] = nil
     charMode[char] = nil
+    sizeSaved[char] = nil
     airJumps = 0
     accMountAt = 0
     accState = accTemplate and "ready" or "idle"
@@ -1840,7 +2029,7 @@ end))
 
 local gui, panel, open = nil, nil, false
 local pages, tabBtns, activeTab = {}, {}, nil
-local setHeadless, setKorblox, setForce, setBoost, setInf, setAura, setNoClip, setEsp
+local setHeadless, setKorblox, setForce, setBoost, setInf, setAura, setNoClip, setEsp, setSize
 
 local function tw(o, t, p) TweenS:Create(o, TweenInfo.new(t), p):Play() end
 
@@ -2094,11 +2283,12 @@ local TABS = {
 
 local function build()
     gui = Instance.new("ScreenGui")
-    gui.Name = "VeniceCos"
+    gui.Name = rnd(9)
     gui.ResetOnSpawn = false
     gui.IgnoreGuiInset = true
     gui.DisplayOrder = 1000000
     gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    gui.Archivable = false
     genv().VeniceCos = gui
     if not stealthGui(gui) then gui.Parent = LP:WaitForChild("PlayerGui") end
 
@@ -2195,6 +2385,25 @@ local function build()
         CONFIG.force = v
         enforce()
     end, 26)
+    section("РАЗМЕР (только клиент)")
+    setSize = row("Менять размер", SIZE.on, function(v)
+        SIZE.on = v
+        local c = LP.Character or myChar()
+        if c then pcall(applySize, c, v) end
+    end)
+    slider("Масштаб", 0.5, 2.5, SIZE.scale, function(v)
+        SIZE.scale = v
+        if SIZE.on then
+            local c = LP.Character or myChar()
+            if c then
+                pcall(applySize, c, false)
+                pcall(applySize, c, true)
+            end
+        end
+    end, 0.05, function(v) return string.format("%.2f", v) end)
+    button("Сбросить размер", function()
+        if setSize then setSize(false) end
+    end)
 
     panel = pages.aura
     section("ЦВЕТ")
@@ -2252,11 +2461,29 @@ local function build()
             clearEsp()
         end
     end)
+    section("ЭЛЕМЕНТЫ")
     row("Бокс", ESP.box, function(v) ESP.box = v end, 26)
     row("Имя", ESP.name, function(v) ESP.name = v end, 26)
     row("Дистанция", ESP.dist, function(v) ESP.dist = v end, 26)
     row("Здоровье", ESP.health, function(v) ESP.health = v end, 26)
-    row("Линии от низа экрана", ESP.tracer, function(v) ESP.tracer = v end, 26)
+    row("Линия к цели", ESP.tracer, function(v) ESP.tracer = v end, 26)
+    section("СТИЛЬ БОКСА")
+    local bg = gridBox(1)
+    chip(bg, "Полный", function()
+        ESP.style = "full"
+        rebuildEsp()
+    end)
+    chip(bg, "Уголки", function()
+        ESP.style = "corner"
+        rebuildEsp()
+    end)
+    section("ВИД")
+    slider("Толщина", 1, 4, ESP.thickness, function(v) ESP.thickness = v end, 1)
+    slider("Размер текста", 8, 22, ESP.textSize, function(v) ESP.textSize = v end, 1)
+    slider("Дальность", 50, 2000, ESP.maxDist, function(v) ESP.maxDist = v end, 25)
+    slider("Прозрачность", 0, 0.9, ESP.transparency, function(v) ESP.transparency = v end, 0.05,
+        function(v) return string.format("%.2f", v) end)
+    row("Обводка текста", ESP.outline, function(v) ESP.outline = v end, 26)
     section("ЦВЕТ ESP")
     local eg = gridBox(2)
     for _, c in ipairs(AURA_COLORS) do
@@ -2269,9 +2496,16 @@ local function build()
             end
         end, c.color)
     end
+    section("АНТИ-ДЕТЕКТ")
+    row("Скрытая папка и рандом имён", ESP.stealth, function(v)
+        ESP.stealth = v
+        rebuildEsp()
+    end)
+    slider("Частота обновления", 0.05, 0.5, ESP.rate, function(v) ESP.rate = v end, 0.01,
+        function(v) return string.format("%.2f", v) end)
+    button("Пересобрать ESP", function() rebuildEsp() end)
     if not DrawingLib then
-        section("ЛИНИИ")
-        button("Drawing недоступен — линии выключены", function() ESP.tracer = false end)
+        button("Drawing нет — уголки уйдут в бокс", function() ESP.style = "full" end)
     end
 
     panel = pages.head
@@ -2390,6 +2624,10 @@ local function build()
         syncFps()
         if PROTECT.parts then pcall(scanHazards) end
         if AURA.on then refreshAura() end
+        if SIZE.on then
+            local c = LP.Character or myChar()
+            if c then pcall(applySize, c, true) end
+        end
         if ESP.on then pcall(espStep) end
         if SKY.mode ~= "off" then pcall(applySky, SKY.mode) end
 
@@ -2415,9 +2653,12 @@ local function build()
         print("[Venice] частей в папке:", partsFolder and #partsFolder:GetChildren() or 0)
         print("[Venice] fps:", tostring(FPS.boost), "частицы off:", tostring(FPS.partsOff), "частиц убито:", #killedParts, "эффектов:", #killedFx)
         print("[Venice] FOV:", tostring(fovTarget), "небо:", SKY.mode)
+        print("[Venice] размер:", tostring(SIZE.on), "x" .. tostring(SIZE.scale))
         local espN = 0
         for _ in pairs(espData) do espN = espN + 1 end
-        print("[Venice] esp:", tostring(ESP.on), "меток:", espN, "Drawing:", DrawingLib and "есть" or "нет")
+        print("[Venice] esp:", tostring(ESP.on), "меток:", espN, "стиль:", ESP.style, "скрытность:", tostring(ESP.stealth),
+            "папка:", espContainer and (espContainer.Parent and espContainer.Parent:GetFullName() or "нет родителя") or "нет",
+            "Drawing:", DrawingLib and "есть" or "нет")
     end)
     button("Убрать всё", function()
         CONFIG.headless, CONFIG.korblox, CONFIG.force = false, false, false
@@ -2427,6 +2668,7 @@ local function build()
         PROTECT.parts = false
         PROTECT.godHealth = false
         ESP.on = false
+        SIZE.on = false
         accCurrent = 0
         accTemplate = nil
         accState = "idle"
@@ -2439,12 +2681,14 @@ local function build()
         if setAura then setAura(false) end
         if setNoClip then setNoClip(false) end
         if setEsp then setEsp(false) end
+        if setSize then setSize(false) end
         pcall(restoreNoclip)
         pcall(clearHazards)
         syncFps()
         for _, c in ipairs(targets()) do
             pcall(applyHeadless, c, false)
             pcall(clearKorblox, c)
+            pcall(applySize, c, false)
         end
         pcall(clearAura)
         pcall(clearAcc)
@@ -2486,7 +2730,7 @@ local function build()
         end
     end)
 
-    print("[Venice] v43 · Z меню")
+    print("[Venice] v44 · Z меню")
 end
 
 pcall(build)
