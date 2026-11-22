@@ -4,7 +4,7 @@ if getgenv().VeniceCos then pcall(function() getgenv().VeniceCos:Destroy() end) 
 if getgenv().SleepConns then
     for _, c in ipairs(getgenv().SleepConns) do pcall(function() c:Disconnect() end) end
 end
-getgenv().SleepConns = {} --пизда
+getgenv().SleepConns = {}
 
 local ref = cloneref or function(s) return s end
 local Players  = ref(game:GetService("Players"))
@@ -777,7 +777,7 @@ end))
 local SPARK = "rbxasset://textures/particles/sparkles_main.dds"
 local SMOKE = "rbxasset://textures/particles/smoke_main.dds"
 
-local auraChar, auraParts, auraSpin = nil, nil, nil
+local auraChar, auraParts, auraSpin, auraRoot = nil, nil, nil, nil
 
 local function rainbow(h) return Color3.fromHSV(h % 1, 1, 1) end
 
@@ -843,7 +843,7 @@ local function clearAura()
     if auraParts then
         for i = 1, #auraParts do pcall(function() auraParts[i]:Destroy() end) end
     end
-    auraChar, auraParts, auraSpin = nil, nil, nil
+    auraChar, auraParts, auraSpin, auraRoot = nil, nil, nil, nil
 end
 
 local function auraBase(made, tex, rate)
@@ -859,22 +859,36 @@ local function auraBase(made, tex, rate)
     return e
 end
 
-local function spinAtt(parent, made, radius, y, phase)
+-- аттачмент на руте: круг всегда горизонтальный, высота задаётся отдельно
+local function spinAtt(made, radius, y, phase)
     local a = Instance.new("Attachment")
     a.Name = "SleepAuraSpin"
     a:SetAttribute("SleepAura", true)
     a:SetAttribute("R", radius)
     a:SetAttribute("Y", y)
     a:SetAttribute("Ph", phase or 0)
-    a.Parent = parent
+    a.CFrame = CFrame.new(0, y, 0) * CFrame.Angles(0, phase or 0, 0) * CFrame.new(radius, 0, 0)
+    a.Parent = auraRoot
     table.insert(made, a)
     table.insert(auraSpin, a)
+    return a
+end
+
+local function discAtt(made, y)
+    local a = Instance.new("Attachment")
+    a.Name = "SleepAuraDisc"
+    a.Orientation = Vector3.new(-90, 0, 0)
+    a.Position = Vector3.new(0, y, 0)
+    a:SetAttribute("SleepAura", true)
+    a.Parent = auraRoot
+    table.insert(made, a)
     return a
 end
 
 local function styleRing(att, made)
     local sz = AURA.size
     local e = auraBase(made, SPARK, 22 * sz)
+    e.Name = "SleepAuraRing"
     e.Shape = Enum.ParticleEmitterShape.Disc
     e.ShapeStyle = Enum.ParticleEmitterShapeStyle.Surface
     e.ShapePartial = 1
@@ -898,6 +912,7 @@ end
 local function styleMist(att, made)
     local sz = AURA.size
     local e = auraBase(made, SMOKE, 9 * sz)
+    e.Name = "SleepAuraMist"
     e.Shape = Enum.ParticleEmitterShape.Sphere
     e.ShapeStyle = Enum.ParticleEmitterShapeStyle.Volume
     e.ShapeRadius = 2.2
@@ -919,6 +934,7 @@ end
 local function styleVortex(att, made)
     local sz = AURA.size
     local e = auraBase(made, SPARK, 30 * sz)
+    e.Name = "SleepAuraVortex"
     e.Shape = Enum.ParticleEmitterShape.Disc
     e.ShapeStyle = Enum.ParticleEmitterShapeStyle.Surface
     e.ShapePartial = 1
@@ -940,8 +956,9 @@ end
 
 local function styleSpiral(att, made)
     local sz = AURA.size
-    local s = spinAtt(att, made, 1.7, 0, 0)
+    local s = spinAtt(made, 1.7, 0, 0)
     local e = auraBase(made, SPARK, 55 * sz)
+    e.Name = "SleepAuraSpiral"
     e.Lifetime = NumberRange.new(0.8, 1.3)
     e.Speed = NumberRange.new(0.05, 0.2)
     e.Drag = 0
@@ -960,6 +977,7 @@ end
 local function styleBurst(att, made)
     local sz = AURA.size
     local e = auraBase(made, SPARK, 110 * sz)
+    e.Name = "SleepAuraBurst"
     e.Lifetime = NumberRange.new(0.3, 0.6)
     e.Speed = NumberRange.new(4, 9)
     e.Drag = 9
@@ -977,8 +995,9 @@ end
 
 local function styleHalo(att, made)
     local sz = AURA.size
-    local s = spinAtt(att, made, 0, 2.6, 0)
+    local d = discAtt(made, 2.6)
     local e = auraBase(made, SPARK, 14 * sz)
+    e.Name = "SleepAuraHalo"
     e.Shape = Enum.ParticleEmitterShape.Disc
     e.ShapeStyle = Enum.ParticleEmitterShapeStyle.Surface
     e.ShapePartial = 1
@@ -993,14 +1012,15 @@ local function styleHalo(att, made)
         NumberSequenceKeypoint.new(0, 0.2),
         NumberSequenceKeypoint.new(1, 1),
     })
-    e.Parent = s
+    e.Parent = d
 end
 
 local function styleOrbit(att, made)
     local sz = AURA.size
     for i = 1, 3 do
-        local s = spinAtt(att, made, 1.9 + i * 0.15, 0.4 * (i - 2), (i - 1) * 2.1)
+        local s = spinAtt(made, 1.9 + i * 0.15, 0.4 * (i - 2), (i - 1) * 2.1)
         local e = auraBase(made, SPARK, 40 * sz)
+        e.Name = "SleepAuraOrbit"
         e.Lifetime = NumberRange.new(0.3, 0.45)
         e.Speed = NumberRange.new(0, 0.05)
         e.Drag = 0
@@ -1019,6 +1039,8 @@ end
 local function stylePulse(att, made)
     local sz = AURA.size
     local e = auraBase(made, SPARK, 34 * sz)
+    e.Name = "SleepAuraPulse"
+    e:SetAttribute("SleepPulse", true)
     e.Shape = Enum.ParticleEmitterShape.Disc
     e.ShapeStyle = Enum.ParticleEmitterShapeStyle.Surface
     e.ShapePartial = 1
@@ -1040,6 +1062,7 @@ end
 local function styleStorm(att, made)
     local sz = AURA.size
     local e = auraBase(made, SPARK, 18 * sz)
+    e.Name = "SleepAuraStorm"
     e.Shape = Enum.ParticleEmitterShape.Sphere
     e.ShapeStyle = Enum.ParticleEmitterShapeStyle.Volume
     e.ShapeRadius = 3
@@ -1062,6 +1085,7 @@ end
 local function styleSnow(att, made)
     local sz = AURA.size
     local e = auraBase(made, SPARK, 22 * sz)
+    e.Name = "SleepAuraSnow"
     e.Shape = Enum.ParticleEmitterShape.Sphere
     e.ShapeStyle = Enum.ParticleEmitterShapeStyle.Volume
     e.ShapeRadius = 3.2
@@ -1084,6 +1108,7 @@ end
 local function styleFlame(att, made)
     local sz = AURA.size
     local e = auraBase(made, SMOKE, 32 * sz)
+    e.Name = "SleepAuraFlame"
     e.Shape = Enum.ParticleEmitterShape.Disc
     e.ShapeStyle = Enum.ParticleEmitterShapeStyle.Volume
     e.ShapePartial = 1
@@ -1106,6 +1131,7 @@ end
 local function styleStars(att, made)
     local sz = AURA.size
     local e = auraBase(made, SPARK, 7 * sz)
+    e.Name = "SleepAuraStars"
     e.Shape = Enum.ParticleEmitterShape.Sphere
     e.ShapeStyle = Enum.ParticleEmitterShapeStyle.Volume
     e.ShapeRadius = 2.8
@@ -1142,6 +1168,7 @@ local function applyAura(char, on)
 
     local made, spins = {}, {}
     auraSpin = spins
+    auraRoot = root
 
     local ok = pcall(function()
         local att = Instance.new("Attachment")
@@ -1179,7 +1206,7 @@ local function applyAura(char, on)
         auraParts = made
     else
         for i = 1, #made do pcall(function() made[i]:Destroy() end) end
-        auraSpin = nil
+        auraSpin, auraRoot = nil, nil
     end
 end
 
@@ -1197,7 +1224,7 @@ task.spawn(function()
         local dt = task.wait(0.05)
         t = t + dt
         if auraChar and not auraChar.Parent then clearAura() end
-        if AURA.on and auraChar and auraParts and auraSpin then
+        if AURA.on and auraChar and auraParts and auraSpin and auraRoot then
             if AURA.mode == "rainbow" then
                 AURA.hue = (AURA.hue + dt * 0.22 * AURA.speed) % 1
                 local c = rainbow(AURA.hue)
@@ -1217,13 +1244,16 @@ task.spawn(function()
             local ph = t * AURA.speed * 1.6
             for i = 1, #auraSpin do
                 local s = auraSpin[i]
-                s.CFrame = CFrame.Angles(0, ph + (s:GetAttribute("Ph") or 0), 0)
-                    * CFrame.new(s:GetAttribute("R") or 1.5, s:GetAttribute("Y") or 0, 0)
+                local r = s:GetAttribute("R") or 1.5
+                local y = s:GetAttribute("Y") or 0
+                s.CFrame = CFrame.new(0, y, 0)
+                    * CFrame.Angles(0, ph + (s:GetAttribute("Ph") or 0), 0)
+                    * CFrame.new(r, 0, 0)
             end
             local mod = 0.55 + 0.45 * math.sin(t * 5 * AURA.speed)
             for i = 1, #auraParts do
                 local o = auraParts[i]
-                if o:IsA("ParticleEmitter") and o.Name:find("Pulse") then
+                if o:IsA("ParticleEmitter") and o:GetAttribute("SleepPulse") then
                     o.Rate = (o:GetAttribute("SleepRate") or 20) * mod
                 end
             end
@@ -2232,11 +2262,12 @@ local function hudLoop()
             hudFps.Text = tostring(fps)
             hudFps.TextColor3 = hudTone(fps, 50, 28)
             hudPing.Text = ping and tostring(ping) or "--"
-            hudPing.TextColor3 = ping and hudTone(1000 - ping * 5, 700, 400) or SUB
             if ping then
                 if ping <= 80 then hudPing.TextColor3 = OKC
                 elseif ping <= 160 then hudPing.TextColor3 = WARN
                 else hudPing.TextColor3 = BAD end
+            else
+                hudPing.TextColor3 = SUB
             end
         else
             frames = 0
@@ -2638,7 +2669,7 @@ local function build()
         print("[Sleep] риг:", hum and hum.RigType.Name or "нет")
         print("[Sleep] weld-режим:", tostring(weldMode), "попыток меша:", char and tostring(cmTries[char]) or "-")
         print("[Sleep] CreateMeshPartAsync:", meshCache and "ок" or "недоступен")
-        print("[Sleep] аура:", tostring(AURA.on), "режим:", AURA.mode, "стиль:", AURA.style, "цель:", auraChar and "есть" or "нет")
+        print("[Sleep] аура:", tostring(AURA.on), "режим:", AURA.mode, "стиль:", AURA.style, "цель:", auraChar and "есть" or "нет", "спинов:", auraSpin and #auraSpin or 0)
         print("[Sleep] аксессуар:", accCurrent, "| состояние:", accState, "| кэш:", accTemplate and "есть" or "нет", "| на голове:", tostring(hasAcc()), "| статус:", accLast)
         print("[Sleep] защита частей:", tostring(PROTECT.parts), "здоровье:", tostring(PROTECT.godHealth))
         print("[Sleep] ноклип:", tostring(CONFIG.noclip), "частей под ноклипом:", #noclipSaved)
