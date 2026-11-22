@@ -765,7 +765,7 @@ local function push(e, parent, made)
     auraEmitters[#auraEmitters + 1] = e
 end
 
-local function makeRing(root, att, made, rate)
+local function makeRing(root, att, made)
     local e = baseEmitter()
     e.Shape = Enum.ParticleEmitterShape.Disc
     e.ShapeStyle = Enum.ParticleEmitterShapeStyle.Surface
@@ -1348,25 +1348,50 @@ end)
 
 -- ============================== камера / прыжок ==============================
 
-local fovTarget, fovUser, fovSettle, fovNext = 70, false, 0, 0
+local fovTarget, fovUser = 70, false
+local fovCam, fovHoldT = nil, 0
+local FOV_EPS = 0.05
+local FOV_MIN, FOV_MAX = 20, 130
+
+local function fovClamp(v) return math.clamp(v, FOV_MIN, FOV_MAX) end
 
 local function fovHold(seconds)
-    local untilT = os.clock() + seconds
-    if untilT > fovSettle then fovSettle = untilT end
+    local t = os.clock() + seconds
+    if t > fovHoldT then fovHoldT = t end
 end
 
-local function applyFov(force)
+-- держим fov жёстко: пишем после обновления камеры, каждый кадр
+local function fovApply(force)
     local cam = WS.CurrentCamera
     if not cam then return end
-    local now = os.clock()
-    if not force then
-        if now < fovSettle or now < fovNext then return end
+    if cam ~= fovCam then
+        fovCam = cam
+        fovHold(0.8)
     end
-    if not fovUser and fovTarget == 70 then return end
-    if math.abs(cam.FieldOfView - fovTarget) <= 2 then return end
-    fovNext = now + 0.3
-    pcall(function() cam.FieldOfView = fovTarget end)
+    if not fovUser then return end
+    if not force and os.clock() < fovHoldT then return end
+    local want = fovClamp(fovTarget)
+    if math.abs(cam.FieldOfView - want) <= FOV_EPS then return end
+    pcall(function() cam.FieldOfView = want end)
 end
+
+local function fovSet(v)
+    fovTarget = fovClamp(v)
+    fovUser = true
+    fovHoldT = 0
+    fovApply(true)
+end
+
+local function fovRelease()
+    fovUser = false
+    fovTarget = 70
+    local cam = WS.CurrentCamera
+    if cam then pcall(function() cam.FieldOfView = 70 end) end
+end
+
+pcall(function()
+    RunS:BindToRenderStep("SleepFov", Enum.RenderPriority.Camera.Value + 1, fovApply)
+end)
 
 track(WS:GetPropertyChangedSignal("CurrentCamera"):Connect(function() fovHold(1.2) end))
 
@@ -1656,7 +1681,7 @@ local function enforce()
         end
     end
 
-    if fovUser or fovTarget ~= 70 then pcall(applyFov) end
+    if fovUser then pcall(fovApply) end
     if SKY.mode ~= "off" then pcall(syncSky) end
 end
 
@@ -2364,11 +2389,8 @@ local function build()
 
     panel = pages.cam
     section("КАМЕРА")
-    slider("FOV", 40, 120, fovTarget, function(v)
-        fovTarget = v
-        fovUser = true
-        applyFov(true)
-    end, 1)
+    slider("FOV", 40, 120, fovTarget, fovSet, 1)
+    button("Сбросить FOV", fovRelease)
 
     local skyPage = pages.sky
     local sl = skyPage:FindFirstChildOfClass("UIListLayout")
@@ -2448,7 +2470,7 @@ local function build()
         if AURA.on then refreshAura() end
         if ESP.on then pcall(espStep) end
         if SKY.mode ~= "off" then pcall(applySky, SKY.mode) end
-        if fovUser then applyFov(true) end
+        if fovUser then fovApply(true) end
         for _ = 1, 6 do
             task.wait(0.12)
             enforce()
@@ -2496,8 +2518,7 @@ local function build()
         pcall(clearAcc)
         pcall(clearEsp)
         pcall(applySky, "off")
-        fovTarget, fovUser = 70, false
-        applyFov(true)
+        fovRelease()
     end)
 
     panel = shell
@@ -2532,6 +2553,7 @@ local function build()
 
     gui.Destroying:Connect(function()
         pcall(function() RunS:UnbindFromRenderStep("SleepLoop") end)
+        pcall(function() RunS:UnbindFromRenderStep("SleepFov") end)
         pcall(function() CAS:UnbindAction("SleepMenu") end)
         pcall(clearAura)
         pcall(clearEsp)
