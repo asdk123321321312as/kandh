@@ -1,9 +1,10 @@
-local genv = getgenv or _G
-if genv().VeniceCos then pcall(function() genv().VeniceCos:Destroy() end) end
-if genv().VeniceCosConns then
-    for _, c in ipairs(genv().VeniceCosConns) do pcall(function() c:Disconnect() end) end
+local G = (type(getgenv) == "function" and getgenv()) or (type(getgenv) == "table" and getgenv) or _G
+if type(G) ~= "table" then G = _G end
+if G.VeniceCos then pcall(function() G.VeniceCos:Destroy() end) end
+if type(G.VeniceCosConns) == "table" then
+    for _, c in ipairs(G.VeniceCosConns) do pcall(function() c:Disconnect() end) end
 end
-genv().VeniceCosConns = {} -- пошёл нахуй
+G.VeniceCosConns = {} -- пошёл наху
 
 local ref = (type(cloneref) == "function" and cloneref) or function(s) return s end
 local Players  = ref(game:GetService("Players"))
@@ -17,7 +18,7 @@ local WS       = ref(workspace)
 local LP       = Players.LocalPlayer
 while not LP do task.wait() end
 
-local function track(c) table.insert(genv().VeniceCosConns, c) return c end
+local function track(c) table.insert(G.VeniceCosConns, c) return c end
 
 local CONFIG = { korblox = true, headless = true, force = true, infJump = false, jumpLimit = -1, noclip = false }
 local FPS    = { boost = false, shadowsOff = false, fxOff = false, partsOff = false, cap = 240 }
@@ -52,6 +53,20 @@ local SUB    = Color3.fromRGB(126, 126, 144)
 local OKC    = Color3.fromRGB(120, 220, 160)
 
 if type(setthreadidentity) == "function" then pcall(setthreadidentity, 7) end
+
+local errAt = {}
+local function safe(name, fn)
+    return function(...)
+        local now = os.clock()
+        local last = errAt[name]
+        if last and now - last < 2 then return end
+        local ok, err = pcall(fn, ...)
+        if not ok then
+            errAt[name] = now
+            warn("[Sleepscript] " .. name .. ": " .. tostring(err))
+        end
+    end
+end
 
 local RNDC = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 local function rnd(n)
@@ -1407,6 +1422,8 @@ local function fovApply(force)
     end
 end
 
+local function fovStep() fovApply(false) end
+
 local function fovSet(v)
     local cam = WS.CurrentCamera
     if not cam then return end
@@ -1427,7 +1444,7 @@ local function fovRelease()
 end
 
 pcall(function()
-    RunS:BindToRenderStep("SleepFov", Enum.RenderPriority.Camera.Value + 1, fovApply)
+    RunS:BindToRenderStep("SleepFov", Enum.RenderPriority.Camera.Value + 1, safe("fov", fovStep))
 end)
 
 track(WS:GetPropertyChangedSignal("CurrentCamera"):Connect(function() fovHold(1.2) end))
@@ -1759,10 +1776,10 @@ end
 
 local bound = false
 pcall(function()
-    RunS:BindToRenderStep("SleepLoop", Enum.RenderPriority.Last.Value - 1, loop)
+    RunS:BindToRenderStep("SleepLoop", Enum.RenderPriority.Last.Value - 1, safe("loop", loop))
     bound = true
 end)
-if not bound then track(RunS.Heartbeat:Connect(loop)) end
+if not bound then track(RunS.Heartbeat:Connect(safe("loop", loop))) end
 
 -- ============================== слежение ==============================
 
@@ -2142,7 +2159,7 @@ local function build()
     gui.DisplayOrder = 1000000
     gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
     gui.Archivable = false
-    genv().VeniceCos = gui
+    G.VeniceCos = gui
     if not stealthGui(gui) then gui.Parent = LP:WaitForChild("PlayerGui") end
 
     local shell = Instance.new("Frame")
@@ -2604,26 +2621,29 @@ local function build()
     print("[Sleepscript] загружено · Z меню")
 end
 
-local okBuild, errBuild = pcall(build)
+local okBuild, errBuild = xpcall(build, debug.traceback)
 if not okBuild then warn("[Sleepscript] ошибка UI: " .. tostring(errBuild)) end
 
-pcall(function()
-    CAS:BindActionAtPriority("SleepMenu", function(_, state, input)
-        if state ~= Enum.UserInputState.Begin then return Enum.ContextActionResult.Pass end
-        if UIS:GetFocusedTextBox() then return Enum.ContextActionResult.Pass end
-        if input.KeyCode == Enum.KeyCode.Z then
-            setOpen()
-            return Enum.ContextActionResult.Sink
-        end
-        return Enum.ContextActionResult.Pass
-    end, false, Enum.ContextActionPriority.High.Value, Enum.KeyCode.Z)
-end)
+local okTail, errTail = xpcall(function()
+    pcall(function()
+        CAS:BindActionAtPriority("SleepMenu", function(_, state, input)
+            if state ~= Enum.UserInputState.Begin then return Enum.ContextActionResult.Pass end
+            if UIS:GetFocusedTextBox() then return Enum.ContextActionResult.Pass end
+            if input.KeyCode == Enum.KeyCode.Z then
+                setOpen()
+                return Enum.ContextActionResult.Sink
+            end
+            return Enum.ContextActionResult.Pass
+        end, false, Enum.ContextActionPriority.High.Value, Enum.KeyCode.Z)
+    end)
 
-track(UIS.InputBegan:Connect(function(input, gp)
-    if gp or UIS:GetFocusedTextBox() then return end
-    if input.KeyCode == Enum.KeyCode.Z then setOpen() end
-end))
+    track(UIS.InputBegan:Connect(function(input, gp)
+        if gp or UIS:GetFocusedTextBox() then return end
+        if input.KeyCode == Enum.KeyCode.Z then setOpen() end
+    end))
 
-pcall(getFolder)
-task.wait(1)
-pcall(enforce)
+    pcall(getFolder)
+    task.wait(1)
+    pcall(enforce)
+end, debug.traceback)
+if not okTail then warn("[Sleepscript] старт: " .. tostring(errTail)) end
