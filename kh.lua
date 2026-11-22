@@ -4,7 +4,7 @@ if G.VeniceCos then pcall(function() G.VeniceCos:Destroy() end) end
 if type(G.VeniceCosConns) == "table" then
     for _, c in ipairs(G.VeniceCosConns) do pcall(function() c:Disconnect() end) end
 end
-G.VeniceCosConns = {} -- пошёл наху
+G.VeniceCosConns = {} -- пошёл нахуй
 
 local ref = (type(cloneref) == "function" and cloneref) or function(s) return s end
 local Players  = ref(game:GetService("Players"))
@@ -1361,93 +1361,148 @@ task.spawn(function()
     end
 end)
 
--- ============================== камера / прыжок ==============================
+-- ============================== fov ==============================
 
-local fovTarget, fovUser, fovFollow = 70, false, true
-local fovCam, fovBase, fovWritten, fovOff = nil, nil, nil, 0
-local fovYield, fovMoveSince = 0, 0
-local FOV_MIN, FOV_MAX = 20, 130
-local FOV_SNAP = 0.5
-local FOV_DEAD = 1.5
+local FOV_MIN, FOV_MAX = 20, 120
+local FOV_EXT = 0.4 -- порог внешнего вмешательства
+
+local F = {
+    on = false,
+    follow = true,
+    wheel = true,
+    target = 70,
+    offset = 0,
+    smooth = 0.35,
+    base = nil,
+    applied = nil,
+    cam = nil,
+    holdUntil = 0,
+}
 
 local function fovClamp(v) return math.clamp(v, FOV_MIN, FOV_MAX) end
 
+local function fovBind(cam)
+    F.cam = cam
+    F.base = cam and cam.FieldOfView or 70
+    F.applied = F.base
+    F.holdUntil = os.clock() + 0.5
+end
+
 local function fovHold(seconds)
     local t = os.clock() + seconds
-    if t > fovYield then fovYield = t end
+    if t > F.holdUntil then F.holdUntil = t end
 end
 
-local function fovBind(cam)
-    local v = (cam and cam.FieldOfView) or 70
-    fovCam, fovBase, fovWritten = cam, v, v
-    fovMoveSince = 0
-    fovHold(0.9)
+local function fovAlpha(dt)
+    if F.smooth <= 0.02 then return 1 end
+    local speed = 2 + (1 - F.smooth) * 42
+    return 1 - math.exp(-speed * math.max(dt, 0.001))
 end
 
--- держим fov каждый кадр после камеры, но зум игры не перебиваем
-local function fovApply(force)
+local function fovWrite(v)
+    local cam = WS.CurrentCamera
+    if cam and math.abs(cam.FieldOfView - v) > 0.01 then
+        pcall(function() cam.FieldOfView = v end)
+    end
+    F.applied = v
+end
+
+local function fovStep(dt)
+    if not F.on then return end
     local cam = WS.CurrentCamera
     if not cam then return end
-    if cam ~= fovCam or fovBase == nil or fovWritten == nil then fovBind(cam) end
-    if not fovUser then return end
+    if cam ~= F.cam or F.base == nil or F.applied == nil then fovBind(cam) end
 
-    local now = os.clock()
     local cur = cam.FieldOfView
-    local ours = math.abs(cur - fovWritten) <= FOV_SNAP
 
-    -- игра сама двинула fov (скоп, зум предмета) -> уступаем и запоминаем её базу
-    if fovFollow and not ours and math.abs(cur - fovBase) > FOV_DEAD then
-        fovBase, fovWritten = cur, cur
-        if fovMoveSince == 0 then fovMoveSince = now end
-        if now - fovMoveSince > 1.2 then
-            fovYield = now
+    -- игра сама двинула fov: скоп, зум предмета, катсцена
+    if math.abs(cur - F.applied) > FOV_EXT then
+        F.applied = cur
+        if F.follow then
+            F.base = cur
+            fovHold(0.15)
         else
-            fovYield = now + 0.35
-            return
+            F.holdUntil = 0
         end
-    else
-        fovMoveSince = 0
     end
 
-    if not force and now < fovYield then return end
+    -- follow: пока игра анимирует зум, не мешаем, только запоминаем её базу
+    if F.follow and os.clock() < F.holdUntil then
+        F.base = cur
+        F.applied = cur
+        return
+    end
 
-    local want = fovFollow and fovClamp(fovBase + fovOff) or fovClamp(fovTarget)
-    if force then
-        fovWritten = want
-    else
-        fovWritten = fovWritten + (want - fovWritten) * 0.4
-    end
-    if math.abs(cam.FieldOfView - fovWritten) > 0.02 then
-        pcall(function() cam.FieldOfView = fovWritten end)
-    end
+    local want = F.follow and fovClamp(F.base + F.offset) or fovClamp(F.target)
+    local nextv = F.applied + (want - F.applied) * fovAlpha(dt)
+    if math.abs(nextv - want) < 0.02 then nextv = want end
+    fovWrite(nextv)
 end
-
-local function fovStep() fovApply(false) end
 
 local function fovSet(v)
     local cam = WS.CurrentCamera
     if not cam then return end
-    if cam ~= fovCam or fovBase == nil then fovBind(cam) end
-    fovTarget = fovClamp(v)
-    fovUser = true
-    fovOff = fovTarget - fovBase
-    fovYield = 0
-    fovApply(true)
+    if cam ~= F.cam or F.base == nil then fovBind(cam) end
+    F.target = fovClamp(v)
+    if F.follow then F.offset = F.target - F.base end
+    F.on = true
+    F.holdUntil = 0
+    fovStep(0.12)
+end
+
+local function fovFollow(v)
+    local cam = WS.CurrentCamera
+    F.follow = v
+    if not cam then return end
+    if v then
+        F.base = cam.FieldOfView
+        F.offset = F.target - F.base
+    else
+        F.target = fovClamp(cam.FieldOfView)
+        F.offset = 0
+    end
+    F.holdUntil = 0
 end
 
 local function fovRelease()
-    fovUser = false
-    fovOff = 0
-    fovTarget = 70
+    F.on = false
     local cam = WS.CurrentCamera
-    if cam and fovBase then pcall(function() cam.FieldOfView = fovBase end) end
+    if cam and F.base then pcall(function() cam.FieldOfView = F.base end) end
+    F.target, F.offset = 70, 0
+    F.cam, F.base, F.applied, F.holdUntil = nil, nil, nil, 0
 end
 
-pcall(function()
+local function fovWheel(dir)
+    if not F.on then return end
+    local stepv = 4 * dir
+    if F.follow then
+        local base = F.base or 70
+        F.offset = math.clamp(F.offset + stepv, FOV_MIN - base, FOV_MAX - base)
+        F.target = fovClamp(base + F.offset)
+    else
+        F.target = fovClamp(F.target + stepv)
+    end
+    F.holdUntil = 0
+end
+
+local fovBound = pcall(function()
     RunS:BindToRenderStep("SleepFov", Enum.RenderPriority.Camera.Value + 1, safe("fov", fovStep))
 end)
+if not fovBound then track(RunS.Heartbeat:Connect(safe("fov", fovStep))) end
 
-track(WS:GetPropertyChangedSignal("CurrentCamera"):Connect(function() fovHold(1.2) end))
+track(WS:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
+    F.cam, F.base, F.applied = nil, nil, nil
+    fovHold(1)
+end))
+
+track(UIS.InputChanged:Connect(function(input)
+    if input.UserInputType ~= Enum.UserInputType.MouseWheel then return end
+    if not F.on or not F.wheel then return end
+    if UIS:GetFocusedTextBox() then return end
+    fovWheel(input.Position.Z > 0 and -1 or 1)
+end))
+
+-- ============================== прыжок ==============================
 
 local lastJump, airJumps = 0, 0
 local function infJump(auto)
@@ -1735,7 +1790,7 @@ local function enforce()
         end
     end
 
-    if fovUser then pcall(fovApply) end
+    if F.on then pcall(fovStep, 0.05) end
     if SKY.mode ~= "off" then pcall(syncSky) end
 end
 
@@ -2443,8 +2498,11 @@ local function build()
 
     panel = pages.cam
     section("КАМЕРА")
-    slider("FOV", 40, 120, fovTarget, fovSet, 1)
-    row("Следовать зуму игры", fovFollow, function(v) fovFollow = v end, 26)
+    slider("FOV", FOV_MIN, FOV_MAX, F.target, fovSet, 1)
+    row("Следовать зуму игры", F.follow, fovFollow, 26)
+    row("Колесо мыши", F.wheel, function(v) F.wheel = v end, 26)
+    slider("Сглаживание", 0, 1, F.smooth, function(v) F.smooth = v end, 0.05,
+        function(v) return string.format("%.2f", v) end)
     button("Сбросить FOV", fovRelease)
 
     local skyPage = pages.sky
@@ -2525,7 +2583,7 @@ local function build()
         if AURA.on then refreshAura() end
         if ESP.on then pcall(espStep) end
         if SKY.mode ~= "off" then pcall(applySky, SKY.mode) end
-        if fovUser then fovApply(true) end
+        if F.on then pcall(fovStep, 0.2) end
         for _ = 1, 6 do
             task.wait(0.12)
             enforce()
@@ -2542,7 +2600,7 @@ local function build()
             return n
         end)())
         print("[Sleepscript] защита:", tostring(PROTECT.parts), "| здоровье:", tostring(PROTECT.godHealth))
-        print("[Sleepscript] fov:", tostring(fovTarget), "| база:", tostring(fovBase), "| смещение:", tostring(fovOff), "| зум:", tostring(fovFollow))
+        print("[Sleepscript] fov:", tostring(F.on), tostring(F.target), "| база:", tostring(F.base), "| смещение:", tostring(F.offset), "| зум:", tostring(F.follow))
         print("[Sleepscript] esp:", tostring(ESP.on), "| Drawing:", DrawingLib and "есть" or "нет")
     end)
     button("Убрать всё", function()
