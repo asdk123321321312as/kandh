@@ -1372,7 +1372,7 @@ local FOV_COOL = 0.6  -- пауза перед повторным уступан
 
 local F = {
     on = false,
-    yieldZoom = true,
+    yieldZoom = false,
     wheel = true,
     target = 70,
     cur = 70,
@@ -1436,7 +1436,7 @@ local function fovStep(dt)
     end
 
     if F.yielding then
-        if gameDelta > FOV_JUMP then
+        if F.yieldZoom and gameDelta > FOV_JUMP then
             local cap = (F.yieldStart > 0 and F.yieldStart or now) + FOV_MAXY
             F.yieldUntil = math.min(F.yieldUntil + FOV_HOLD, cap)
         end
@@ -1506,13 +1506,13 @@ local function fovWheel(dir)
 end
 
 local fovBound = pcall(function()
-    RunS:BindToRenderStep("SleepFov", Enum.RenderPriority.Last.Value - 5, safe("fov", fovStep))
+    RunS:BindToRenderStep("SleepFov", Enum.RenderPriority.Last.Value, safe("fov", fovStep))
 end)
 if not fovBound then track(RunS.Heartbeat:Connect(safe("fov", fovStep))) end
 
 track(WS:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
     F.cam, F.wrote, F.lastGame = nil, nil, nil
-    fovHold(0.8)
+    fovHold(0.4)
 end))
 
 track(UIS.InputChanged:Connect(function(input)
@@ -1868,7 +1868,7 @@ local function watchChar(char)
     airJumps = 0
     accMountAt = 0
     accState = accTemplate and "ready" or "idle"
-    fovHold(1.2)
+    fovHold(0.6)
 
     enforce()
     for _, d in ipairs({ 0.2, 0.6, 1.2, 2.4 }) do task.delay(d, enforce) end
@@ -1925,7 +1925,7 @@ end
 if LP.Character then watchChar(LP.Character) end
 track(LP.CharacterAdded:Connect(watchChar))
 track(LP.CharacterAppearanceLoaded:Connect(function()
-    fovHold(1)
+    fovHold(0.5)
     enforce()
 end))
 
