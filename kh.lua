@@ -4,7 +4,7 @@ if genv().VeniceCos then pcall(function() genv().VeniceCos:Destroy() end) end
 if genv().VeniceCosConns then
     for _, c in ipairs(genv().VeniceCosConns) do pcall(function() c:Disconnect() end) end
 end
-genv().VeniceCosConns = {} --хуй
+genv().VeniceCosConns = {}
 
 local ref = (type(cloneref) == "function" and cloneref) or function(s) return s end
 local Players  = ref(game:GetService("Players"))
@@ -29,6 +29,7 @@ local FPS = { boost = false, shadowsOff = false, fxOff = false, partsOff = false
 local AURA = { on = false, size = 1, speed = 1, spin = 1, hue = 0, mode = "rainbow", color = Color3.fromRGB(152, 132, 255), style = "ring" }
 local PROTECT = { parts = true, godHealth = true }
 local SIZE = { on = false, scale = 1 }
+local ANIM = { speed = 1, loop = true, weight = 1, id = "" }
 local ESP = {
     on = false, box = true, name = true, dist = true, health = true, tracer = true,
     rainbow = true, color = Color3.fromRGB(152, 132, 255),
@@ -524,7 +525,9 @@ end
 
 -- ============================== размер персонажа (клиент) ==============================
 
+local R15_PROPS = { "BodyHeightScale", "BodyWidthScale", "BodyDepthScale", "HeadScale" }
 local sizeSaved = setmetatable({}, { __mode = "k" })
+local sizeApplied = setmetatable({}, { __mode = "k" })
 
 local function scaleKorbloxLegs(char, f)
     if not partsFolder then return end
@@ -578,56 +581,100 @@ local function applySize(char, on)
     if not char then return end
     local hum = char:FindFirstChildOfClass("Humanoid")
     if not hum then return end
+    local r15 = hum.RigType == Enum.HumanoidRigType.R15
+    local f = SIZE.scale
 
     if not on then
         local s = sizeSaved[char]
+        sizeSaved[char] = nil
+        sizeApplied[char] = nil
         if s then
-            sizeSaved[char] = nil
-            for p, sz in pairs(s.parts) do
-                if p.Parent then pcall(function() p.Size = sz end) end
+            if s.parts then
+                for p, v in pairs(s.parts) do if p.Parent then pcall(function() p.Size = v end) end end
             end
-            for m, j in pairs(s.joints) do
-                if m.Parent then
-                    pcall(function() m.C0 = j[1] m.C1 = j[2] end)
+            if s.meshes then
+                for m, v in pairs(s.meshes) do if m.Parent then pcall(function() m.Scale = v end) end end
+            end
+            if s.joints then
+                for m, j in pairs(s.joints) do
+                    if m.Parent then pcall(function() m.C0 = j[1] m.C1 = j[2] end) end
                 end
             end
-            pcall(function() hum.HipHeight = s.hip end)
+            if s.hum then
+                for prop, v in pairs(s.hum) do pcall(function() hum[prop] = v end) end
+            end
         end
         scaleKorbloxLegs(char, 1)
         scaleAccParts(char, 1)
         return
     end
 
-    local f = SIZE.scale
     local s = sizeSaved[char]
     if not s then
-        s = { parts = {}, joints = {}, hip = hum.HipHeight }
+        s = { parts = {}, meshes = {}, joints = {}, hum = {} }
         sizeSaved[char] = s
+        for _, prop in ipairs(R15_PROPS) do pcall(function() s.hum[prop] = hum[prop] end) end
+        pcall(function() s.hum.HipHeight = hum.HipHeight end)
         for _, d in ipairs(char:GetDescendants()) do
-            if d:IsA("BasePart") then
-                s.parts[d] = d.Size
+            if d:IsA("SpecialMesh") then
+                s.meshes[d] = d.Scale
             elseif d:IsA("Motor6D") then
                 s.joints[d] = { d.C0, d.C1 }
+            elseif d:IsA("BasePart") then
+                s.parts[d] = d.Size
+                if not r15 and not d:FindFirstChildWhichIsA("SpecialMesh") then
+                    local m = Instance.new("SpecialMesh")
+                    m.MeshType = Enum.MeshType.Brick
+                    m.Parent = d
+                    s.meshes[m] = m.Scale
+                end
             end
         end
     end
 
-    for p, base in pairs(s.parts) do
-        if p.Parent then pcall(function() p.Size = base * f end) end
-    end
-    for m, j in pairs(s.joints) do
-        if m.Parent then
-            local c0, c1 = j[1], j[2]
-            pcall(function()
-                m.C0 = CFrame.new(c0.Position * f) * (c0 - c0.Position)
-                m.C1 = CFrame.new(c1.Position * f) * (c1 - c1.Position)
-            end)
+    if r15 then
+        for _, prop in ipairs(R15_PROPS) do
+            local base = s.hum[prop]
+            if base then pcall(function() hum[prop] = base * f end) end
         end
+    else
+        for p, base in pairs(s.parts) do
+            if p.Parent then pcall(function() p.Size = base * f end) end
+        end
+        for m, base in pairs(s.meshes) do
+            if m.Parent then pcall(function() m.Scale = base * f end) end
+        end
+        for m, j in pairs(s.joints) do
+            if m.Parent then
+                local c0, c1 = j[1], j[2]
+                pcall(function()
+                    m.C0 = CFrame.new(c0.Position * f) * (c0 - c0.Position)
+                    m.C1 = CFrame.new(c1.Position * f) * (c1 - c1.Position)
+                end)
+            end
+        end
+        if s.hum.HipHeight then pcall(function() hum.HipHeight = s.hum.HipHeight * f end) end
     end
-    pcall(function() hum.HipHeight = s.hip * f end)
 
     scaleKorbloxLegs(char, f)
     scaleAccParts(char, f)
+    sizeApplied[char] = f
+end
+
+local function sizeOutOfSync(char, hum)
+    local ap = sizeApplied[char]
+    if not ap or math.abs(ap - SIZE.scale) > 0.001 then return true end
+    local s = sizeSaved[char]
+    if not s then return true end
+    if hum.RigType == Enum.HumanoidRigType.R15 then
+        local base = s.hum.BodyHeightScale
+        if base and math.abs(hum.BodyHeightScale - base * SIZE.scale) > 0.03 then return true end
+    else
+        local hd = char:FindFirstChild("Head")
+        local base = hd and s.parts[hd]
+        if base and math.abs(hd.Size.Y - base.Y * SIZE.scale) > 0.03 then return true end
+    end
+    return false
 end
 
 -- ============================== ноклип ==============================
@@ -894,6 +941,204 @@ local function cleanupParts(list)
     if meshCache and not meshCache.Parent then meshCache = nil end
 end
 
+-- ============================== анимации (только клиент) ==============================
+
+local animTrack = nil
+local animBound = false
+local animLast = "не запускалось"
+local animRecent = {}
+
+local R6_MAP = {
+    LowerTorso = "RootJoint",
+    UpperTorso = "RootJoint",
+    Head = "Neck",
+    LeftUpperArm = "LeftShoulder",
+    LeftLowerArm = "LeftShoulder",
+    LeftHand = "LeftShoulder",
+    RightUpperArm = "RightShoulder",
+    RightLowerArm = "RightShoulder",
+    RightHand = "RightShoulder",
+    LeftUpperLeg = "LeftHip",
+    LeftLowerLeg = "LeftHip",
+    LeftFoot = "LeftHip",
+    RightUpperLeg = "RightHip",
+    RightLowerLeg = "RightHip",
+    RightFoot = "RightHip",
+}
+
+local function normName(s) return (s:gsub("%s+", "")):lower() end
+
+local function clearPose()
+    local char = LP.Character
+    if not char then return end
+    for _, d in ipairs(char:GetDescendants()) do
+        if d:IsA("Motor6D") then pcall(function() d.Transform = CFrame.identity end) end
+    end
+end
+
+local function stopAnim()
+    animTrack = nil
+    clearPose()
+end
+
+local function jointIndex(char)
+    local idx = {}
+    for _, d in ipairs(char:GetDescendants()) do
+        if d:IsA("Motor6D") and d.Part1 then
+            idx[normName(d.Part1.Name)] = d
+        end
+    end
+    return idx
+end
+
+local function poseMotor(name, idx, r6)
+    local direct = idx[normName(name)]
+    if direct then return direct end
+    if r6 then
+        local alt = R6_MAP[name]
+        if alt then return idx[normName(alt)] end
+    end
+    return nil
+end
+
+local function collectPose(pose, accum, out, idx, r6)
+    local cf = accum * pose.CFrame
+    local motor = poseMotor(pose.Name, idx, r6)
+    if motor then out[motor] = cf end
+    for _, child in ipairs(pose:GetChildren()) do
+        if child:IsA("Pose") then collectPose(child, cf, out, idx, r6) end
+    end
+end
+
+local function sampleKeys(keys, t)
+    local n = #keys
+    if n == 0 then return CFrame.identity end
+    if t <= keys[1][1] then return keys[1][2] end
+    if t >= keys[n][1] then return keys[n][2] end
+    local i = 1
+    while i < n and keys[i + 1][1] <= t do i = i + 1 end
+    local a, b = keys[i], keys[i + 1]
+    local span = b[1] - a[1]
+    local alpha = span > 1e-4 and (t - a[1]) / span or 0
+    return a[2]:Lerp(b[2], alpha)
+end
+
+local function animStep(dt)
+    local tr = animTrack
+    if not tr then return end
+    tr.t = tr.t + dt * ANIM.speed
+    if tr.t >= tr.len then
+        if ANIM.loop and tr.len > 0.01 then
+            tr.t = tr.t % tr.len
+        else
+            tr.t = tr.len
+            for motor, keys in pairs(tr.joints) do
+                if motor.Parent then
+                    pcall(function() motor.Transform = CFrame.identity:Lerp(sampleKeys(keys, tr.t), ANIM.weight) end)
+                end
+            end
+            animTrack = nil
+            return
+        end
+    end
+    for motor, keys in pairs(tr.joints) do
+        if motor.Parent then
+            pcall(function() motor.Transform = CFrame.identity:Lerp(sampleKeys(keys, tr.t), ANIM.weight) end)
+        end
+    end
+end
+
+local function fetchSequence(id)
+    local seq = nil
+    pcall(function()
+        seq = game:GetService("KeyframeSequenceProvider"):GetKeyframeSequenceAsync("rbxassetid://" .. id)
+    end)
+    if seq then return seq end
+    pcall(function()
+        local clip = game:GetService("AnimationClipProvider"):GetAnimationClip("rbxassetid://" .. id)
+        if clip then
+            if clip:IsA("AnimationClip") then
+                seq = clip.KeyframeSequence
+            elseif clip:IsA("KeyframeSequence") then
+                seq = clip
+            end
+        end
+    end)
+    return seq
+end
+
+local function playAnim(id)
+    id = tostring(id or ""):gsub("%D", "")
+    if id == "" then return false, "пустой ID" end
+    stopAnim()
+    local char = LP.Character or myChar()
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    if not hum then return false, "нет персонажа" end
+
+    local seq = fetchSequence(id)
+    if not seq then
+        animLast = "ассет не загрузился: " .. id
+        return false, animLast
+    end
+
+    local r6 = hum.RigType ~= Enum.HumanoidRigType.R15
+    local idx = jointIndex(char)
+    local frames = {}
+    for _, kf in ipairs(seq:GetChildren()) do
+        if kf:IsA("Keyframe") then table.insert(frames, kf) end
+    end
+    table.sort(frames, function(a, b) return a.Time < b.Time end)
+    if #frames == 0 then
+        animLast = "в анимации нет кадров"
+        return false, animLast
+    end
+
+    local joints = {}
+    local len = 0
+    for _, kf in ipairs(frames) do
+        if kf.Time > len then len = kf.Time end
+        local out = {}
+        for _, pose in ipairs(kf:GetChildren()) do
+            if pose:IsA("Pose") then collectPose(pose, CFrame.identity, out, idx, r6) end
+        end
+        for motor, cf in pairs(out) do
+            local list = joints[motor]
+            if not list then
+                list = {}
+                joints[motor] = list
+            end
+            table.insert(list, { kf.Time, cf })
+        end
+    end
+    if len < 0.02 then len = 1 end
+
+    local count = 0
+    for _ in pairs(joints) do count = count + 1 end
+    if count == 0 then
+        animLast = "не найдено совместимых суставов"
+        return false, animLast
+    end
+
+    animTrack = { joints = joints, t = 0, len = len }
+    ANIM.id = id
+    animLast = "играет " .. id .. " · суставов " .. count .. (r6 and " · ретаргет R15→R6" or "")
+    for i = #animRecent, 1, -1 do
+        if animRecent[i] == id then table.remove(animRecent, i) end
+    end
+    table.insert(animRecent, 1, id)
+    if #animRecent > 6 then table.remove(animRecent) end
+    return true, animLast
+end
+
+pcall(function()
+    RunS:BindToRenderStep("VeniceAnim", Enum.RenderPriority.Character.Value + 1, animStep)
+    animBound = true
+end)
+
+if not animBound then
+    track(RunS.RenderStepped:Connect(animStep))
+end
+
 -- ============================== аура ==============================
 
 local auraChar = nil
@@ -902,6 +1147,7 @@ local auraNodes = {}
 local auraEmitters = {}
 local auraLight = nil
 local auraT = 0
+local auraNext = 0
 
 local function rainbow(h) return Color3.fromHSV(h % 1, 1, 1) end
 
@@ -939,12 +1185,18 @@ local AURA_COLORS = {
 }
 
 local AURA_STYLES = {
-    { name = "Кольцо",   id = "ring" },
-    { name = "Туман",    id = "mist" },
-    { name = "Орбита",   id = "orbit" },
-    { name = "Спираль",  id = "spiral" },
-    { name = "Мерцание", id = "flicker" },
-    { name = "Пульс",    id = "pulse" },
+    { name = "Кольцо",    id = "ring" },
+    { name = "Туман",     id = "mist" },
+    { name = "Орбита",    id = "orbit" },
+    { name = "Спираль",   id = "spiral" },
+    { name = "Мерцание",  id = "flicker" },
+    { name = "Пульс",     id = "pulse" },
+    { name = "Вихрь",     id = "vortex" },
+    { name = "Волна",     id = "wave" },
+    { name = "Пламя",     id = "flame" },
+    { name = "Звездопад", id = "rain" },
+    { name = "Клетка",    id = "cage" },
+    { name = "Вспышка",   id = "burst" },
 }
 
 local function clearAura()
@@ -953,7 +1205,7 @@ local function clearAura()
     end
     auraChar, auraParts = nil, nil
     auraNodes, auraEmitters = {}, {}
-    auraLight, auraT = nil, 0
+    auraLight, auraT, auraNext = nil, 0, 0
 end
 
 local function baseEmitter()
@@ -964,6 +1216,23 @@ local function baseEmitter()
     e.Color = auraSeq()
     e:SetAttribute("VeniceAura", true)
     return e
+end
+
+local function newAtt(root, made, y)
+    local a = Instance.new("Attachment")
+    a.Name = "VeniceAuraNode"
+    a:SetAttribute("VeniceAura", true)
+    if y then a.Position = Vector3.new(0, y, 0) end
+    a.Parent = root
+    table.insert(made, a)
+    table.insert(auraNodes, a)
+    return a
+end
+
+local function pushEmitter(e, parent, made)
+    e.Parent = parent
+    table.insert(made, e)
+    table.insert(auraEmitters, e)
 end
 
 local function makeRing(att, made, rate)
@@ -977,19 +1246,10 @@ local function makeRing(att, made, rate)
     e.Speed = NumberRange.new(0.6, 2.2)
     e.Drag = 3
     e.Acceleration = Vector3.new(0, 2.6, 0)
-    e.Size = NumberSequence.new({
-        kp(0, 0.5 * AURA.size),
-        kp(0.35, 0.85 * AURA.size),
-        kp(1, 0),
-    })
-    e.Transparency = NumberSequence.new({
-        kp(0, 0.15),
-        kp(1, 1),
-    })
+    e.Size = NumberSequence.new({ kp(0, 0.5 * AURA.size), kp(0.35, 0.85 * AURA.size), kp(1, 0) })
+    e.Transparency = NumberSequence.new({ kp(0, 0.15), kp(1, 1) })
     e.RotSpeed = NumberRange.new(-120, 120)
-    e.Parent = att
-    table.insert(made, e)
-    table.insert(auraEmitters, e)
+    pushEmitter(e, att, made)
 end
 
 local function makeMist(att, made)
@@ -1002,29 +1262,15 @@ local function makeMist(att, made)
     e.Speed = NumberRange.new(0.2, 0.9)
     e.Drag = 4
     e.Acceleration = Vector3.new(0, 1.1, 0)
-    e.Size = NumberSequence.new({
-        kp(0, 1.1 * AURA.size),
-        kp(1, 0),
-    })
-    e.Transparency = NumberSequence.new({
-        kp(0, 0.55),
-        kp(1, 1),
-    })
-    e.Parent = att
-    table.insert(made, e)
-    table.insert(auraEmitters, e)
+    e.Size = NumberSequence.new({ kp(0, 1.1 * AURA.size), kp(1, 0) })
+    e.Transparency = NumberSequence.new({ kp(0, 0.55), kp(1, 1) })
+    pushEmitter(e, att, made)
 end
 
 local function makeOrbit(root, made)
     for i = 1, 3 do
-        local a = Instance.new("Attachment")
-        a.Name = "VeniceAuraNode"
-        a:SetAttribute("VeniceAura", true)
+        local a = newAtt(root, made, 0.4)
         a.Position = Vector3.new(math.cos(i * 2.09) * 2, 0.4, math.sin(i * 2.09) * 2)
-        a.Parent = root
-        table.insert(made, a)
-        table.insert(auraNodes, a)
-
         local e = baseEmitter()
         e.Name = "VeniceAuraOrbit"
         e.Shape = Enum.ParticleEmitterShape.Sphere
@@ -1035,20 +1281,12 @@ local function makeOrbit(root, made)
         e.Size = NumberSequence.new({ kp(0, 0.5 * AURA.size), kp(1, 0) })
         e.Transparency = NumberSequence.new({ kp(0, 0.1), kp(1, 1) })
         e.RotSpeed = NumberRange.new(-200, 200)
-        e.Parent = a
-        table.insert(made, e)
-        table.insert(auraEmitters, e)
+        pushEmitter(e, a, made)
     end
 end
 
 local function makeSpiral(root, made)
-    local a = Instance.new("Attachment")
-    a.Name = "VeniceAuraNode"
-    a:SetAttribute("VeniceAura", true)
-    a.Parent = root
-    table.insert(made, a)
-    table.insert(auraNodes, a)
-
+    local a = newAtt(root, made)
     local e = baseEmitter()
     e.Name = "VeniceAuraSpiral"
     e.Shape = Enum.ParticleEmitterShape.Sphere
@@ -1059,9 +1297,111 @@ local function makeSpiral(root, made)
     e.Size = NumberSequence.new({ kp(0, 0.55 * AURA.size), kp(1, 0) })
     e.Transparency = NumberSequence.new({ kp(0, 0.1), kp(1, 1) })
     e.RotSpeed = NumberRange.new(-260, 260)
-    e.Parent = a
-    table.insert(made, e)
-    table.insert(auraEmitters, e)
+    pushEmitter(e, a, made)
+end
+
+local function makeVortex(root, made)
+    local a = newAtt(root, made, 0.2)
+    local e = baseEmitter()
+    e.Name = "VeniceAuraVortex"
+    e.Shape = Enum.ParticleEmitterShape.Disc
+    e.ShapeStyle = Enum.ParticleEmitterShapeStyle.Surface
+    e.ShapePartial = 1
+    e.ShapeRadius = 1.3 * AURA.size
+    e.Rate = 70 * AURA.size
+    e.Lifetime = NumberRange.new(0.5, 1.1)
+    e.Speed = NumberRange.new(0.1, 0.7)
+    e.Drag = 2
+    e.Acceleration = Vector3.new(0, 9, 0)
+    e.Size = NumberSequence.new({ kp(0, 0.38 * AURA.size), kp(1, 0) })
+    e.Transparency = NumberSequence.new({ kp(0, 0.1), kp(1, 1) })
+    e.RotSpeed = NumberRange.new(-300, 300)
+    pushEmitter(e, a, made)
+end
+
+local function makeWave(root, made)
+    local a = newAtt(root, made, 0.15)
+    local e = baseEmitter()
+    e.Name = "VeniceAuraWave"
+    e.Shape = Enum.ParticleEmitterShape.Disc
+    e.ShapeStyle = Enum.ParticleEmitterShapeStyle.Surface
+    e.ShapePartial = 1
+    e.ShapeRadius = 0.4 * AURA.size
+    e.Rate = 0
+    e.Lifetime = NumberRange.new(0.5, 0.85)
+    e.Speed = NumberRange.new(6, 9)
+    e.Drag = 3
+    e.Acceleration = Vector3.new(0, 0.6, 0)
+    e.Size = NumberSequence.new({ kp(0, 0.5 * AURA.size), kp(1, 0.15 * AURA.size) })
+    e.Transparency = NumberSequence.new({ kp(0, 0.2), kp(1, 1) })
+    pushEmitter(e, a, made)
+end
+
+local function makeFlame(root, made)
+    local a = newAtt(root, made, -1)
+    local e = baseEmitter()
+    e.Name = "VeniceAuraFlame"
+    e.Shape = Enum.ParticleEmitterShape.Disc
+    e.ShapeStyle = Enum.ParticleEmitterShapeStyle.Surface
+    e.ShapeRadius = 0.65 * AURA.size
+    e.Rate = 60 * AURA.size
+    e.Lifetime = NumberRange.new(0.35, 0.7)
+    e.Speed = NumberRange.new(1.5, 3.5)
+    e.Acceleration = Vector3.new(0, 7, 0)
+    e.Drag = 2
+    e.Size = NumberSequence.new({ kp(0, 0.6 * AURA.size), kp(1, 0) })
+    e.Transparency = NumberSequence.new({ kp(0, 0.1), kp(1, 1) })
+    e.RotSpeed = NumberRange.new(-160, 160)
+    pushEmitter(e, a, made)
+end
+
+local function makeRain(root, made)
+    local a = newAtt(root, made, 7 * AURA.size)
+    local e = baseEmitter()
+    e.Name = "VeniceAuraRain"
+    e.Shape = Enum.ParticleEmitterShape.Sphere
+    e.ShapeStyle = Enum.ParticleEmitterShapeStyle.Surface
+    e.ShapeRadius = 2.6 * AURA.size
+    e.Rate = 35 * AURA.size
+    e.Lifetime = NumberRange.new(1.1, 1.6)
+    e.Speed = NumberRange.new(0, 0.4)
+    e.Acceleration = Vector3.new(0, -10, 0)
+    e.Size = NumberSequence.new({ kp(0, 0.22 * AURA.size), kp(1, 0.05 * AURA.size) })
+    e.Transparency = NumberSequence.new({ kp(0, 0.1), kp(1, 1) })
+    pushEmitter(e, a, made)
+end
+
+local function makeCage(root, made)
+    local a = newAtt(root, made, 1.2)
+    local e = baseEmitter()
+    e.Name = "VeniceAuraCage"
+    e.Shape = Enum.ParticleEmitterShape.Sphere
+    e.ShapeStyle = Enum.ParticleEmitterShapeStyle.Surface
+    e.ShapeRadius = 1.8 * AURA.size
+    e.Rate = 30 * AURA.size
+    e.Lifetime = NumberRange.new(0.7, 1)
+    e.Speed = NumberRange.new(0.02, 0.15)
+    e.Size = NumberSequence.new({ kp(0, 0.3 * AURA.size), kp(1, 0) })
+    e.Transparency = NumberSequence.new({ kp(0, 0.15), kp(1, 1) })
+    e.RotSpeed = NumberRange.new(-90, 90)
+    pushEmitter(e, a, made)
+end
+
+local function makeBurst(root, made)
+    local a = newAtt(root, made, 0.6)
+    local e = baseEmitter()
+    e.Name = "VeniceAuraBurst"
+    e.Shape = Enum.ParticleEmitterShape.Sphere
+    e.ShapeStyle = Enum.ParticleEmitterShapeStyle.Volume
+    e.ShapeRadius = 0.4 * AURA.size
+    e.Rate = 0
+    e.Lifetime = NumberRange.new(0.45, 0.8)
+    e.Speed = NumberRange.new(5, 8)
+    e.Drag = 5
+    e.Size = NumberSequence.new({ kp(0, 0.5 * AURA.size), kp(1, 0) })
+    e.Transparency = NumberSequence.new({ kp(0, 0.1), kp(1, 1) })
+    e.RotSpeed = NumberRange.new(-240, 240)
+    pushEmitter(e, a, made)
 end
 
 local function applyAura(char, on)
@@ -1082,15 +1422,28 @@ local function applyAura(char, on)
         att.Parent = root
         table.insert(made, att)
 
-        if AURA.style == "orbit" then
+        local st = AURA.style
+        if st == "orbit" then
             makeOrbit(root, made)
-        elseif AURA.style == "spiral" then
+        elseif st == "spiral" then
             makeSpiral(root, made)
-        elseif AURA.style == "mist" then
+        elseif st == "vortex" then
+            makeVortex(root, made)
+        elseif st == "wave" then
+            makeWave(root, made)
+        elseif st == "flame" then
+            makeFlame(root, made)
+        elseif st == "rain" then
+            makeRain(root, made)
+        elseif st == "cage" then
+            makeCage(root, made)
+        elseif st == "burst" then
+            makeBurst(root, made)
+        elseif st == "mist" then
             makeMist(att, made)
-        elseif AURA.style == "flicker" then
+        elseif st == "flicker" then
             makeRing(att, made, 0)
-        elseif AURA.style == "pulse" then
+        elseif st == "pulse" then
             makeRing(att, made, 14 * AURA.size)
         else
             makeRing(att, made)
@@ -1163,6 +1516,25 @@ local function updateAuraStyle(dt)
         local e = auraEmitters[1]
         if e then e.Rate = (5 + 45 * s) * AURA.size end
         if auraLight then auraLight.Brightness = 1 + s * 3 end
+    elseif AURA.style == "wave" then
+        if auraT >= auraNext then
+            auraNext = auraT + 0.55 / AURA.speed
+            local e = auraEmitters[1]
+            if e then pcall(function() e:Emit(math.floor(22 * AURA.size)) end) end
+            if auraLight then auraLight.Brightness = 4 end
+        end
+    elseif AURA.style == "burst" then
+        if auraT >= auraNext then
+            auraNext = auraT + 0.7 / AURA.speed
+            local e = auraEmitters[1]
+            if e then pcall(function() e:Emit(math.floor(18 * AURA.size)) end) end
+        end
+    elseif AURA.style == "vortex" then
+        local a = auraNodes[1]
+        if a and a.Parent then
+            local ang = auraT * 1.6 * AURA.spin
+            a.Position = Vector3.new(math.cos(ang) * 0.25, 0.2, math.sin(ang) * 0.25)
+        end
     end
 end
 
@@ -1913,7 +2285,10 @@ local function enforce()
     local mine = LP.Character or myChar()
     if mine then
         if AURA.on then pcall(applyAura, mine, true) end
-        if SIZE.on and not sizeSaved[mine] then pcall(applySize, mine, true) end
+        if SIZE.on then
+            local hum = mine:FindFirstChildOfClass("Humanoid")
+            if hum and sizeOutOfSync(mine, hum) then pcall(applySize, mine, true) end
+        end
     end
 
     pcall(cleanupParts, list)
@@ -1968,6 +2343,8 @@ local function watchChar(char)
     cmTries[char] = nil
     charMode[char] = nil
     sizeSaved[char] = nil
+    sizeApplied[char] = nil
+    animTrack = nil
     airJumps = 0
     accMountAt = 0
     accState = accTemplate and "ready" or "idle"
@@ -1975,12 +2352,6 @@ local function watchChar(char)
     enforce()
     for _, d in ipairs({ 0.2, 0.5, 0.9, 1.4, 2.2, 3.2 }) do
         task.delay(d, enforce)
-    end
-
-    if SIZE.on and SIZE.scale ~= 1 then
-        task.delay(0.6, function()
-            if SIZE.on and LP.Character == char then pcall(applySize, char, true) end
-        end)
     end
 
     if accCurrent ~= 0 and not accTemplate then
@@ -1997,9 +2368,7 @@ local function watchChar(char)
                 hookPart(d)
                 if CONFIG.noclip then pcall(noclipOne, d, true) end
                 if SIZE.on and sizeSaved[char] and not sizeSaved[char].parts[d] then
-                    local f = SIZE.scale
-                    sizeSaved[char].parts[d] = d.Size / f
-                    pcall(function() d.Size = d.Size end)
+                    sizeSaved[char].parts[d] = d.Size
                     task.defer(function() if d.Parent then pcall(applySize, char, true) end end)
                 end
             end
@@ -2230,6 +2599,30 @@ local function gridBox(rows)
     return f
 end
 
+local function textBox(placeholder, default)
+    local r = Instance.new("Frame")
+    r.Size = UDim2.new(1, -8, 0, 30)
+    r.BackgroundColor3 = ROW
+    r.BorderSizePixel = 0
+    r.Parent = panel
+    Instance.new("UICorner", r).CornerRadius = UDim.new(0, 8)
+
+    local b = Instance.new("TextBox")
+    b.Size = UDim2.new(1, -20, 1, 0)
+    b.Position = UDim2.fromOffset(10, 0)
+    b.BackgroundTransparency = 1
+    b.Font = Enum.Font.GothamSemibold
+    b.TextSize = 12
+    b.TextColor3 = TEXT
+    b.TextXAlignment = Enum.TextXAlignment.Left
+    b.PlaceholderText = placeholder
+    b.PlaceholderColor3 = SUB
+    b.Text = default or ""
+    b.ClearTextOnFocus = false
+    b.Parent = r
+    return b
+end
+
 local function slider(text, min, max, default, cb, step, fmt)
     local r = Instance.new("Frame")
     r.Size = UDim2.new(1, -8, 0, 40)
@@ -2326,6 +2719,7 @@ end
 
 local TABS = {
     { id = "look", label = "Внешка" },
+    { id = "anim", label = "Анимац." },
     { id = "aura", label = "Аура" },
     { id = "esp",  label = "ESP" },
     { id = "head", label = "Голова" },
@@ -2460,6 +2854,81 @@ local function build()
         if setSize then setSize(false) end
     end)
 
+    panel = pages.anim
+    section("АНИМАЦИЯ ПО ID")
+    local animInput = textBox("ID анимации, например 507771019", ANIM.id)
+    local animStatus = Instance.new("TextLabel")
+    animStatus.Size = UDim2.new(1, -8, 0, 16)
+    animStatus.BackgroundTransparency = 1
+    animStatus.Font = Enum.Font.GothamMedium
+    animStatus.TextSize = 10
+    animStatus.TextColor3 = SUB
+    animStatus.TextXAlignment = Enum.TextXAlignment.Left
+    animStatus.Text = "статус: " .. animLast
+    animStatus.Parent = panel
+
+    button("Играть", function()
+        local ok, msg = playAnim(animInput.Text)
+        animStatus.Text = "статус: " .. tostring(msg)
+        if not ok then animStatus.TextColor3 = Color3.fromRGB(255, 110, 110)
+        else animStatus.TextColor3 = OKC end
+    end, true)
+    button("Стоп", function()
+        stopAnim()
+        animStatus.Text = "статус: остановлено"
+        animStatus.TextColor3 = SUB
+    end)
+
+    section("ПЛЕЕР")
+    row("Зациклить", ANIM.loop, function(v) ANIM.loop = v end)
+    slider("Скорость", 0.1, 3, ANIM.speed, function(v) ANIM.speed = v end, 0.1,
+        function(v) return string.format("%.1f", v) end)
+    slider("Вес позы", 0, 1, ANIM.weight, function(v) ANIM.weight = v end, 0.05,
+        function(v) return string.format("%.2f", v) end)
+
+    section("НЕДАВНИЕ")
+    local recentGrid = gridBox(2)
+    local function refreshRecent()
+        for _, o in ipairs(recentGrid:GetChildren()) do
+            if o:IsA("TextButton") then o:Destroy() end
+        end
+        if #animRecent == 0 then
+            local l = Instance.new("TextLabel")
+            l.Size = UDim2.new(1, -8, 0, 16)
+            l.BackgroundTransparency = 1
+            l.Font = Enum.Font.GothamMedium
+            l.TextSize = 10
+            l.TextColor3 = SUB
+            l.TextXAlignment = Enum.TextXAlignment.Left
+            l.Text = "  пусто"
+            l.Parent = panel
+            return
+        end
+        for _, id in ipairs(animRecent) do
+            chip(recentGrid, id, function()
+                animInput.Text = id
+                local ok, msg = playAnim(id)
+                animStatus.Text = "статус: " .. tostring(msg)
+                animStatus.TextColor3 = ok and OKC or Color3.fromRGB(255, 110, 110)
+            end)
+        end
+    end
+    refreshRecent()
+
+    button("Обновить недавние", function() refreshRecent() end)
+    section("ИНФО")
+    local info = Instance.new("TextLabel")
+    info.Size = UDim2.new(1, -8, 0, 44)
+    info.BackgroundTransparency = 1
+    info.Font = Enum.Font.GothamMedium
+    info.TextSize = 10
+    info.TextColor3 = SUB
+    info.TextWrapped = true
+    info.TextXAlignment = Enum.TextXAlignment.Left
+    info.TextYAlignment = Enum.TextYAlignment.Top
+    info.Text = "Позы пишутся в Motor6D.Transform, поэтому анимацию видишь только ты. R15-анимации автоматически переносятся на R6."
+    info.Parent = panel
+
     panel = pages.aura
     section("ЦВЕТ")
     local cg = gridBox(2)
@@ -2475,7 +2944,7 @@ local function build()
         end, c.color)
     end
     section("СТИЛЬ")
-    local sg = gridBox(2)
+    local sg = gridBox(3)
     for _, s in ipairs(AURA_STYLES) do
         chip(sg, s.name, function()
             AURA.style = s.id
@@ -2692,6 +3161,7 @@ local function build()
                 pcall(applySize, c, true)
             end
         end
+        if ANIM.id ~= "" then pcall(playAnim, ANIM.id) end
         if ESP.on then pcall(espStep) end
         if SKY.mode ~= "off" then pcall(applySky, SKY.mode) end
 
@@ -2717,10 +3187,12 @@ local function build()
         print("[Venice] частей в папке:", partsFolder and #partsFolder:GetChildren() or 0)
         print("[Venice] fps:", tostring(FPS.boost), "частицы off:", tostring(FPS.partsOff), "частиц убито:", #killedParts, "эффектов:", #killedFx)
         print("[Venice] FOV:", tostring(fovTarget), "небо:", SKY.mode)
-        local mc = LP.Character and sizeSaved[LP.Character]
-        local np = 0
-        if mc then for _ in pairs(mc.parts) do np = np + 1 end end
-        print("[Venice] размер:", tostring(SIZE.on), "x" .. tostring(SIZE.scale), "зафиксировано частей:", np)
+        local mh = LP.Character and LP.Character:FindFirstChildOfClass("Humanoid")
+        print("[Venice] размер:", tostring(SIZE.on), "x" .. tostring(SIZE.scale),
+            "| BodyHeightScale:", mh and tostring(mh.BodyHeightScale) or "-",
+            "| применено:", tostring(LP.Character and sizeApplied[LP.Character]))
+        print("[Venice] анимация:", animTrack and ("играет, суставов " .. tostring(#animRecent)) or "нет",
+            "| id:", ANIM.id, "| статус:", animLast, "| привязка:", tostring(animBound))
         local espN = 0
         for _ in pairs(espData) do espN = espN + 1 end
         print("[Venice] esp:", tostring(ESP.on), "меток:", espN, "стиль:", ESP.style, "скрытность:", tostring(ESP.stealth),
@@ -2749,6 +3221,7 @@ local function build()
         if setNoClip then setNoClip(false) end
         if setEsp then setEsp(false) end
         if setSize then setSize(false) end
+        pcall(stopAnim)
         pcall(restoreNoclip)
         pcall(clearHazards)
         syncFps()
@@ -2788,16 +3261,18 @@ local function build()
 
     gui.Destroying:Connect(function()
         pcall(function() RunS:UnbindFromRenderStep("VeniceEnforce") end)
+        pcall(function() RunS:UnbindFromRenderStep("VeniceAnim") end)
         pcall(function() CAS:UnbindAction("VeniceMenu") end)
         pcall(clearAura)
         pcall(clearEsp)
+        pcall(stopAnim)
         pcall(restoreNoclip)
         if partsFolder then
             for _, o in ipairs(partsFolder:GetChildren()) do pcall(function() o:Destroy() end) end
         end
     end)
 
-    print("[Venice] v45 · Z меню")
+    print("[Venice] v47 · Z меню")
 end
 
 pcall(build)
