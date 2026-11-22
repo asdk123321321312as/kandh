@@ -1,8 +1,10 @@
+-- ===================== SLEEPSCRIPT =====================
+if getgenv().Sleepscript then pcall(function() getgenv().Sleepscript:Destroy() end) end
 if getgenv().VeniceCos then pcall(function() getgenv().VeniceCos:Destroy() end) end
-if getgenv().VeniceCosConns then
-    for _, c in ipairs(getgenv().VeniceCosConns) do pcall(function() c:Disconnect() end) end
+if getgenv().SleepConns then
+    for _, c in ipairs(getgenv().SleepConns) do pcall(function() c:Disconnect() end) end
 end
-getgenv().VeniceCosConns = {}
+getgenv().SleepConns = {} --пизда
 
 local ref = cloneref or function(s) return s end
 local Players  = ref(game:GetService("Players"))
@@ -12,20 +14,23 @@ local Lighting = ref(game:GetService("Lighting"))
 local AssetS   = ref(game:GetService("AssetService"))
 local RunS     = ref(game:GetService("RunService"))
 local CAS      = ref(game:GetService("ContextActionService"))
+local Stats    = ref(game:GetService("Stats"))
 local WS       = ref(workspace)
 local LP       = Players.LocalPlayer
 while not LP do task.wait() end
 
-local function track(c) table.insert(getgenv().VeniceCosConns, c) return c end
+local function track(c) table.insert(getgenv().SleepConns, c) return c end
 
+-- ВСЁ ВЫКЛЮЧЕНО ПО УМОЛЧАНИЮ
 local CONFIG = {
-    korblox = true, headless = true, force = true,
+    korblox = false, headless = false, force = false,
     infJump = false, jumpLimit = -1,
     noclip = false,
 }
 local FPS = { boost = false, shadowsOff = false, fxOff = false, partsOff = false, cap = 240 }
-local AURA = { on = false, size = 1, speed = 1, hue = 0, mode = "rainbow", color = Color3.fromRGB(152, 132, 255), style = "both" }
-local PROTECT = { parts = true, godHealth = true }
+local AURA = { on = false, size = 1, speed = 1, hue = 0, mode = "rainbow", color = Color3.fromRGB(152, 132, 255), style = "ring" }
+local PROTECT = { parts = false, godHealth = false }
+local HUD = { on = false }
 
 local ACCS = {
     { id = 132809431,  name = "Doomsekkar" },
@@ -40,13 +45,16 @@ local MESH = "rbxassetid://101851696"
 local TEX  = "rbxassetid://101851254"
 
 local ACCENT = Color3.fromRGB(152, 132, 255)
+local ACCENT2 = Color3.fromRGB(96, 220, 255)
 local BG     = Color3.fromRGB(9, 9, 11)
 local ROW    = Color3.fromRGB(23, 23, 28)
 local OFF    = Color3.fromRGB(45, 45, 54)
-local STROKE = Color3.fromRGB(41, 41, 49)
+local STROKE = Color3.fromRGB(48, 46, 62)
 local TEXT   = Color3.fromRGB(238, 238, 244)
 local SUB    = Color3.fromRGB(128, 128, 144)
 local OKC    = Color3.fromRGB(120, 220, 160)
+local WARN   = Color3.fromRGB(240, 200, 90)
+local BAD    = Color3.fromRGB(235, 95, 95)
 
 if setthreadidentity then pcall(setthreadidentity, 7) end
 
@@ -93,24 +101,27 @@ local function refreshScan()
     scanCache = list
 end
 
+local tmpList, tmpSeen = {}, {}
 local function targets()
     if os.clock() - scanAt > 0.3 then refreshScan() end
-    local list, seen = {}, {}
-    addModel(list, seen, LP.Character)
+    table.clear(tmpList)
+    table.clear(tmpSeen)
+    addModel(tmpList, tmpSeen, LP.Character)
     local cam = WS.CurrentCamera
     if cam then
         local subj = cam.CameraSubject
-        if subj then addModel(list, seen, subj.Parent) end
+        if subj then addModel(tmpList, tmpSeen, subj.Parent) end
     end
-    for _, m in ipairs(scanCache) do addModel(list, seen, m) end
-    return list
+    local n = #scanCache
+    for i = 1, n do addModel(tmpList, tmpSeen, scanCache[i]) end
+    return tmpList
 end
 
 -- ============================== откат свойств ==============================
 
 local hidingNow = false
 local hooked = setmetatable({}, { __mode = "k" })
-local ATTR = "VeniceOrigT"
+local ATTR = "SleepOrigT"
 
 local function hookPart(p)
     if hooked[p] then return end
@@ -187,7 +198,7 @@ local function applyHeadless(char, on)
         end
     end
     for _, acc in ipairs(headAccessories(char, parts)) do
-        if not acc:GetAttribute("VeniceHat") then
+        if not acc:GetAttribute("SleepHat") then
             for _, d in ipairs(acc:GetDescendants()) do
                 if d:IsA("BasePart") or d:IsA("Decal") then
                     if d:IsA("BasePart") then hookPart(d) end
@@ -204,10 +215,10 @@ local partsFolder = nil
 
 local function getFolder()
     if partsFolder and partsFolder.Parent then return partsFolder end
-    local f = WS:FindFirstChild("VeniceCosParts")
+    local f = WS:FindFirstChild("SleepParts")
     if not f then
         f = Instance.new("Folder")
-        f.Name = "VeniceCosParts"
+        f.Name = "SleepParts"
         f.Archivable = false
         f.Parent = WS
     end
@@ -232,7 +243,7 @@ end
 
 -- ============================== аксессуары ==============================
 
-local ACC_ATTR = "VeniceHatPart"
+local ACC_ATTR = "SleepHatPart"
 local accLast = "не запускалось"
 local accTemplate = nil
 local accState = "idle"
@@ -349,7 +360,7 @@ local function mountAcc()
     if not src then accState = "failed" accFailAt = os.clock() return end
 
     local handle = src:Clone()
-    handle.Name = "VeniceHatHandle"
+    handle.Name = "SleepHatHandle"
     handle:SetAttribute(ACC_ATTR, true)
     handle.Anchored = false
     handle.CanCollide = false
@@ -437,7 +448,7 @@ end
 local function findKorbloxPart(char)
     if not partsFolder or not partsFolder.Parent then return nil end
     for _, p in ipairs(partsFolder:GetChildren()) do
-        if p:IsA("BasePart") and p.Name == "VeniceKorbloxLeg" then
+        if p:IsA("BasePart") and p.Name == "SleepKorbloxLeg" then
             local w = p:FindFirstChildWhichIsA("WeldConstraint")
             if w and w.Part1 and w.Part1:IsDescendantOf(char) then return p end
         end
@@ -445,13 +456,13 @@ local function findKorbloxPart(char)
 end
 
 local function korbloxOk(char)
-    if char:FindFirstChild("VeniceKorblox") then return true end
+    if char:FindFirstChild("SleepKorblox") then return true end
     return findKorbloxPart(char) ~= nil
 end
 
 local function clearKorblox(char)
     if not char then return end
-    local cm = char:FindFirstChild("VeniceKorblox")
+    local cm = char:FindFirstChild("SleepKorblox")
     if cm then pcall(function() cm:Destroy() end) end
     local p = findKorbloxPart(char)
     if p then pcall(function() p:Destroy() end) end
@@ -462,7 +473,7 @@ local function clearKorblox(char)
     local s = savedCharMesh[char]
     if s then
         local m = Instance.new("CharacterMesh")
-        m.Name = "VeniceKorbloxRestore"
+        m.Name = "SleepKorbloxRestore"
         m.BodyPart = Enum.BodyPart.RightLeg
         m.MeshId = s.mesh
         m.OverlayTextureId = s.tex
@@ -507,10 +518,10 @@ local function buildKorbloxLeg(char, upper, lower, foot)
             part.TextureID = TEX
             part.MeshId = MESH
         end)
-        part.Name = "VeniceKorbloxLeg"
+        part.Name = "SleepKorbloxLeg"
     else
         part = Instance.new("Part")
-        part.Name = "VeniceKorbloxLeg"
+        part.Name = "SleepKorbloxLeg"
         local sm = Instance.new("SpecialMesh", part)
         sm.MeshType = Enum.MeshType.FileMesh
         sm.MeshId = MESH
@@ -559,14 +570,14 @@ local function applyKorblox(char, on)
             weldMode = true
         else
             for _, d in ipairs(char:GetChildren()) do
-                if d:IsA("CharacterMesh") and d.BodyPart == Enum.BodyPart.RightLeg and d.Name ~= "VeniceKorblox" then
+                if d:IsA("CharacterMesh") and d.BodyPart == Enum.BodyPart.RightLeg and d.Name ~= "SleepKorblox" then
                     savedCharMesh[char] = { mesh = d.MeshId, tex = d.OverlayTextureId }
                     pcall(function() d:Destroy() end)
                     break
                 end
             end
             local m = Instance.new("CharacterMesh")
-            m.Name = "VeniceKorblox"
+            m.Name = "SleepKorblox"
             m.BodyPart = Enum.BodyPart.RightLeg
             m.MeshId = 101851696
             m.OverlayTextureId = 101851254
@@ -586,7 +597,8 @@ local function cleanupParts(list)
         local w = p:FindFirstChildWhichIsA("WeldConstraint")
         local alive = false
         if w then
-            for _, c in ipairs(list) do
+            for i = 1, #list do
+                local c = list[i]
                 if (w.Part0 and w.Part0:IsDescendantOf(c)) or (w.Part1 and w.Part1:IsDescendantOf(c)) then
                     alive = true
                     break
@@ -685,9 +697,9 @@ task.spawn(function()
     end
 end)
 
--- ============================== защита от урона и чекпоинтов ==============================
+-- ============================== защита ==============================
 
-local TOUCH_ATTR = "VeniceOrigTouch"
+local TOUCH_ATTR = "SleepOrigTouch"
 local HAZ = {
     "kill", "damage", "dmg", "hurt", "lava", "spike", "saw", "trap", "hazard",
     "death", "die", "void", "poison", "acid", "burn", "crush", "squash",
@@ -696,8 +708,8 @@ local HAZ = {
 
 local function isHazName(name)
     local n = name:lower()
-    for _, p in ipairs(HAZ) do
-        if n:find(p, 1, true) then return true end
+    for i = 1, #HAZ do
+        if n:find(HAZ[i], 1, true) then return true end
     end
     return false
 end
@@ -731,7 +743,7 @@ local function scanHazards()
             if n > 8000 then break end
         end
     end
-    print("[Venice] защищено частей:", n)
+    print("[Sleep] защищено частей:", n)
 end
 
 local function clearHazards()
@@ -762,8 +774,10 @@ end))
 
 -- ============================== аура ==============================
 
-local auraChar = nil
-local auraParts = nil
+local SPARK = "rbxasset://textures/particles/sparkles_main.dds"
+local SMOKE = "rbxasset://textures/particles/smoke_main.dds"
+
+local auraChar, auraParts, auraSpin = nil, nil, nil
 
 local function rainbow(h) return Color3.fromHSV(h % 1, 1, 1) end
 
@@ -786,84 +800,336 @@ local function auraSeq()
 end
 
 local AURA_COLORS = {
-    { name = "Радуга",  mode = "rainbow" },
-    { name = "Фиолет",  color = Color3.fromRGB(152, 132, 255) },
-    { name = "Красный", color = Color3.fromRGB(255, 60, 60) },
-    { name = "Золото",  color = Color3.fromRGB(255, 205, 60) },
-    { name = "Лайм",    color = Color3.fromRGB(160, 255, 60) },
-    { name = "Циан",    color = Color3.fromRGB(70, 230, 255) },
-    { name = "Розовый", color = Color3.fromRGB(255, 110, 210) },
-    { name = "Белый",   color = Color3.fromRGB(255, 255, 255) },
+    { name = "Радуга",   mode = "rainbow" },
+    { name = "Фиолет",   color = Color3.fromRGB(152, 132, 255) },
+    { name = "Индиго",   color = Color3.fromRGB(96, 92, 220) },
+    { name = "Лиловый",  color = Color3.fromRGB(196, 130, 255) },
+    { name = "Магента",  color = Color3.fromRGB(255, 60, 190) },
+    { name = "Розовый",  color = Color3.fromRGB(255, 140, 200) },
+    { name = "Красный",  color = Color3.fromRGB(255, 60, 60) },
+    { name = "Коралл",   color = Color3.fromRGB(255, 120, 100) },
+    { name = "Оранж",    color = Color3.fromRGB(255, 145, 40) },
+    { name = "Янтарь",   color = Color3.fromRGB(255, 180, 70) },
+    { name = "Золото",   color = Color3.fromRGB(255, 210, 70) },
+    { name = "Лайм",     color = Color3.fromRGB(175, 255, 70) },
+    { name = "Зелёный",  color = Color3.fromRGB(60, 230, 110) },
+    { name = "Изумруд",  color = Color3.fromRGB(40, 220, 160) },
+    { name = "Мята",     color = Color3.fromRGB(120, 255, 200) },
+    { name = "Циан",     color = Color3.fromRGB(70, 230, 255) },
+    { name = "Бирюза",   color = Color3.fromRGB(60, 200, 210) },
+    { name = "Небо",     color = Color3.fromRGB(110, 175, 255) },
+    { name = "Синий",    color = Color3.fromRGB(60, 110, 255) },
+    { name = "Лаванда",  color = Color3.fromRGB(190, 170, 255) },
+    { name = "Белый",    color = Color3.fromRGB(255, 255, 255) },
+    { name = "Пепел",    color = Color3.fromRGB(190, 190, 205) },
 }
 
 local AURA_STYLES = {
-    { name = "Кольцо", id = "ring" },
-    { name = "Туман",  id = "mist" },
+    { name = "Кольцо",  id = "ring" },
+    { name = "Туман",   id = "mist" },
+    { name = "Вихрь",   id = "vortex" },
+    { name = "Спираль", id = "spiral" },
+    { name = "Взрыв",   id = "burst" },
+    { name = "Ореол",   id = "halo" },
+    { name = "Орбита",  id = "orbit" },
+    { name = "Пульс",   id = "pulse" },
+    { name = "Гроза",   id = "storm" },
+    { name = "Снег",    id = "snow" },
+    { name = "Пламя",   id = "flame" },
+    { name = "Звёзды",  id = "stars" },
 }
 
 local function clearAura()
     if auraParts then
-        for _, o in ipairs(auraParts) do pcall(function() o:Destroy() end) end
+        for i = 1, #auraParts do pcall(function() auraParts[i]:Destroy() end) end
     end
-    auraChar, auraParts = nil, nil
+    auraChar, auraParts, auraSpin = nil, nil, nil
 end
 
-local function makeRing(att, made)
+local function auraBase(made, tex, rate)
     local e = Instance.new("ParticleEmitter")
-    e.Name = "VeniceAuraRing"
-    e.Texture = "rbxasset://textures/particles/sparkles_main.dds"
+    e.Texture = tex or SPARK
+    e.LightEmission = 1
+    e.LightInfluence = 0
+    e.Color = auraSeq()
+    e.Rate = rate
+    e:SetAttribute("SleepAura", true)
+    e:SetAttribute("SleepRate", rate)
+    table.insert(made, e)
+    return e
+end
+
+local function spinAtt(parent, made, radius, y, phase)
+    local a = Instance.new("Attachment")
+    a.Name = "SleepAuraSpin"
+    a:SetAttribute("SleepAura", true)
+    a:SetAttribute("R", radius)
+    a:SetAttribute("Y", y)
+    a:SetAttribute("Ph", phase or 0)
+    a.Parent = parent
+    table.insert(made, a)
+    table.insert(auraSpin, a)
+    return a
+end
+
+local function styleRing(att, made)
+    local sz = AURA.size
+    local e = auraBase(made, SPARK, 22 * sz)
     e.Shape = Enum.ParticleEmitterShape.Disc
     e.ShapeStyle = Enum.ParticleEmitterShapeStyle.Surface
     e.ShapePartial = 1
-    e.Rate = 20 * AURA.size
     e.Lifetime = NumberRange.new(0.6, 1.1)
     e.Speed = NumberRange.new(0.6, 2.2)
     e.Drag = 3
     e.Acceleration = Vector3.new(0, 2.6, 0)
     e.Size = NumberSequence.new({
-        NumberSequenceKeypoint.new(0, 0.5 * AURA.size),
-        NumberSequenceKeypoint.new(0.35, 0.85 * AURA.size),
+        NumberSequenceKeypoint.new(0, 0.5 * sz),
+        NumberSequenceKeypoint.new(0.35, 0.85 * sz),
         NumberSequenceKeypoint.new(1, 0),
     })
     e.Transparency = NumberSequence.new({
         NumberSequenceKeypoint.new(0, 0.15),
         NumberSequenceKeypoint.new(1, 1),
     })
-    e.LightEmission = 1
-    e.LightInfluence = 0
     e.RotSpeed = NumberRange.new(-120, 120)
-    e.Color = auraSeq()
-    e:SetAttribute("VeniceAura", true)
     e.Parent = att
-    table.insert(made, e)
 end
 
-local function makeMist(att, made)
-    local e = Instance.new("ParticleEmitter")
-    e.Name = "VeniceAuraMist"
-    e.Texture = "rbxasset://textures/particles/sparkles_main.dds"
+local function styleMist(att, made)
+    local sz = AURA.size
+    local e = auraBase(made, SMOKE, 9 * sz)
     e.Shape = Enum.ParticleEmitterShape.Sphere
     e.ShapeStyle = Enum.ParticleEmitterShapeStyle.Volume
-    e.Rate = 8 * AURA.size
+    e.ShapeRadius = 2.2
     e.Lifetime = NumberRange.new(1, 1.8)
     e.Speed = NumberRange.new(0.2, 0.9)
     e.Drag = 4
     e.Acceleration = Vector3.new(0, 1.1, 0)
     e.Size = NumberSequence.new({
-        NumberSequenceKeypoint.new(0, 1.1 * AURA.size),
+        NumberSequenceKeypoint.new(0, 1.1 * sz),
         NumberSequenceKeypoint.new(1, 0),
     })
     e.Transparency = NumberSequence.new({
         NumberSequenceKeypoint.new(0, 0.55),
         NumberSequenceKeypoint.new(1, 1),
     })
-    e.LightEmission = 1
-    e.LightInfluence = 0
-    e.Color = auraSeq()
-    e:SetAttribute("VeniceAura", true)
     e.Parent = att
-    table.insert(made, e)
 end
+
+local function styleVortex(att, made)
+    local sz = AURA.size
+    local e = auraBase(made, SPARK, 30 * sz)
+    e.Shape = Enum.ParticleEmitterShape.Disc
+    e.ShapeStyle = Enum.ParticleEmitterShapeStyle.Surface
+    e.ShapePartial = 1
+    e.Lifetime = NumberRange.new(0.45, 0.85)
+    e.Speed = NumberRange.new(1.6, 3.6)
+    e.Drag = 7
+    e.Acceleration = Vector3.new(0, 4.5, 0)
+    e.Size = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, 0.55 * sz),
+        NumberSequenceKeypoint.new(1, 0),
+    })
+    e.Transparency = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, 0.1),
+        NumberSequenceKeypoint.new(1, 1),
+    })
+    e.RotSpeed = NumberRange.new(200, 420)
+    e.Parent = att
+end
+
+local function styleSpiral(att, made)
+    local sz = AURA.size
+    local s = spinAtt(att, made, 1.7, 0, 0)
+    local e = auraBase(made, SPARK, 55 * sz)
+    e.Lifetime = NumberRange.new(0.8, 1.3)
+    e.Speed = NumberRange.new(0.05, 0.2)
+    e.Drag = 0
+    e.Acceleration = Vector3.new(0, 1.4, 0)
+    e.Size = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, 0.5 * sz),
+        NumberSequenceKeypoint.new(1, 0),
+    })
+    e.Transparency = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, 0.2),
+        NumberSequenceKeypoint.new(1, 1),
+    })
+    e.Parent = s
+end
+
+local function styleBurst(att, made)
+    local sz = AURA.size
+    local e = auraBase(made, SPARK, 110 * sz)
+    e.Lifetime = NumberRange.new(0.3, 0.6)
+    e.Speed = NumberRange.new(4, 9)
+    e.Drag = 9
+    e.Acceleration = Vector3.new(0, -2.5, 0)
+    e.Size = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, 0.45 * sz),
+        NumberSequenceKeypoint.new(1, 0),
+    })
+    e.Transparency = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, 0.1),
+        NumberSequenceKeypoint.new(1, 1),
+    })
+    e.Parent = att
+end
+
+local function styleHalo(att, made)
+    local sz = AURA.size
+    local s = spinAtt(att, made, 0, 2.6, 0)
+    local e = auraBase(made, SPARK, 14 * sz)
+    e.Shape = Enum.ParticleEmitterShape.Disc
+    e.ShapeStyle = Enum.ParticleEmitterShapeStyle.Surface
+    e.ShapePartial = 1
+    e.Lifetime = NumberRange.new(1, 1.6)
+    e.Speed = NumberRange.new(0.1, 0.4)
+    e.Acceleration = Vector3.new(0, 0.8, 0)
+    e.Size = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, 0.45 * sz),
+        NumberSequenceKeypoint.new(1, 0),
+    })
+    e.Transparency = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, 0.2),
+        NumberSequenceKeypoint.new(1, 1),
+    })
+    e.Parent = s
+end
+
+local function styleOrbit(att, made)
+    local sz = AURA.size
+    for i = 1, 3 do
+        local s = spinAtt(att, made, 1.9 + i * 0.15, 0.4 * (i - 2), (i - 1) * 2.1)
+        local e = auraBase(made, SPARK, 40 * sz)
+        e.Lifetime = NumberRange.new(0.3, 0.45)
+        e.Speed = NumberRange.new(0, 0.05)
+        e.Drag = 0
+        e.Size = NumberSequence.new({
+            NumberSequenceKeypoint.new(0, 0.45 * sz),
+            NumberSequenceKeypoint.new(1, 0),
+        })
+        e.Transparency = NumberSequence.new({
+            NumberSequenceKeypoint.new(0, 0.1),
+            NumberSequenceKeypoint.new(1, 1),
+        })
+        e.Parent = s
+    end
+end
+
+local function stylePulse(att, made)
+    local sz = AURA.size
+    local e = auraBase(made, SPARK, 34 * sz)
+    e.Shape = Enum.ParticleEmitterShape.Disc
+    e.ShapeStyle = Enum.ParticleEmitterShapeStyle.Surface
+    e.ShapePartial = 1
+    e.Lifetime = NumberRange.new(0.4, 0.7)
+    e.Speed = NumberRange.new(1, 3)
+    e.Drag = 5
+    e.Acceleration = Vector3.new(0, 3, 0)
+    e.Size = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, 0.6 * sz),
+        NumberSequenceKeypoint.new(1, 0),
+    })
+    e.Transparency = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, 0.1),
+        NumberSequenceKeypoint.new(1, 1),
+    })
+    e.Parent = att
+end
+
+local function styleStorm(att, made)
+    local sz = AURA.size
+    local e = auraBase(made, SPARK, 18 * sz)
+    e.Shape = Enum.ParticleEmitterShape.Sphere
+    e.ShapeStyle = Enum.ParticleEmitterShapeStyle.Volume
+    e.ShapeRadius = 3
+    e.Lifetime = NumberRange.new(0.5, 1)
+    e.Speed = NumberRange.new(1, 4)
+    e.Drag = 2
+    e.Acceleration = Vector3.new(0, 1.5, 0)
+    e.Size = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, 0.5 * sz),
+        NumberSequenceKeypoint.new(1, 0),
+    })
+    e.Transparency = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, 0.15),
+        NumberSequenceKeypoint.new(1, 1),
+    })
+    e.RotSpeed = NumberRange.new(-300, 300)
+    e.Parent = att
+end
+
+local function styleSnow(att, made)
+    local sz = AURA.size
+    local e = auraBase(made, SPARK, 22 * sz)
+    e.Shape = Enum.ParticleEmitterShape.Sphere
+    e.ShapeStyle = Enum.ParticleEmitterShapeStyle.Volume
+    e.ShapeRadius = 3.2
+    e.Lifetime = NumberRange.new(1.5, 2.6)
+    e.Speed = NumberRange.new(0.1, 0.5)
+    e.Drag = 0.5
+    e.Acceleration = Vector3.new(0, -2.6, 0)
+    e.Size = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, 0.35 * sz),
+        NumberSequenceKeypoint.new(1, 0.2 * sz),
+    })
+    e.Transparency = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, 0.2),
+        NumberSequenceKeypoint.new(1, 1),
+    })
+    e.RotSpeed = NumberRange.new(-60, 60)
+    e.Parent = att
+end
+
+local function styleFlame(att, made)
+    local sz = AURA.size
+    local e = auraBase(made, SMOKE, 32 * sz)
+    e.Shape = Enum.ParticleEmitterShape.Disc
+    e.ShapeStyle = Enum.ParticleEmitterShapeStyle.Volume
+    e.ShapePartial = 1
+    e.Lifetime = NumberRange.new(0.4, 0.8)
+    e.Speed = NumberRange.new(1, 3)
+    e.Drag = 4
+    e.Acceleration = Vector3.new(0, 6, 0)
+    e.Size = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, 0.8 * sz),
+        NumberSequenceKeypoint.new(1, 0),
+    })
+    e.Transparency = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, 0.25),
+        NumberSequenceKeypoint.new(1, 1),
+    })
+    e.RotSpeed = NumberRange.new(-90, 90)
+    e.Parent = att
+end
+
+local function styleStars(att, made)
+    local sz = AURA.size
+    local e = auraBase(made, SPARK, 7 * sz)
+    e.Shape = Enum.ParticleEmitterShape.Sphere
+    e.ShapeStyle = Enum.ParticleEmitterShapeStyle.Volume
+    e.ShapeRadius = 2.8
+    e.Lifetime = NumberRange.new(1.5, 2.6)
+    e.Speed = NumberRange.new(0, 0.1)
+    e.Drag = 0
+    e.Size = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, 0.4 * sz),
+        NumberSequenceKeypoint.new(0.5, 0.15 * sz),
+        NumberSequenceKeypoint.new(1, 0),
+    })
+    e.Transparency = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, 0.1),
+        NumberSequenceKeypoint.new(0.5, 0.6),
+        NumberSequenceKeypoint.new(1, 1),
+    })
+    e.Parent = att
+end
+
+local STYLE_FN = {
+    ring = styleRing, mist = styleMist, vortex = styleVortex, spiral = styleSpiral,
+    burst = styleBurst, halo = styleHalo, orbit = styleOrbit, pulse = stylePulse,
+    storm = styleStorm, snow = styleSnow, flame = styleFlame, stars = styleStars,
+}
 
 local function applyAura(char, on)
     if not on then clearAura() return end
@@ -874,22 +1140,22 @@ local function applyAura(char, on)
     local root = (hum and hum.RootPart) or char:FindFirstChild("HumanoidRootPart") or char.PrimaryPart
     if not root then return end
 
-    local made = {}
+    local made, spins = {}, {}
+    auraSpin = spins
+
     local ok = pcall(function()
         local att = Instance.new("Attachment")
-        att.Name = "VeniceAuraAtt"
+        att.Name = "SleepAuraAtt"
         att.Orientation = Vector3.new(-90, 0, 0)
+        att:SetAttribute("SleepAura", true)
         att.Parent = root
         table.insert(made, att)
 
-        if AURA.style == "mist" then
-            makeMist(att, made)
-        else
-            makeRing(att, made)
-        end
+        local fn = STYLE_FN[AURA.style] or styleRing
+        fn(att, made)
 
         local light = Instance.new("PointLight")
-        light.Name = "VeniceAuraLight"
+        light.Name = "SleepAuraLight"
         light.Brightness = 2
         light.Range = 12
         light.Color = auraColor()
@@ -897,7 +1163,7 @@ local function applyAura(char, on)
         table.insert(made, light)
 
         local hl = Instance.new("Highlight")
-        hl.Name = "VeniceAuraHL"
+        hl.Name = "SleepAuraHL"
         hl.Adornee = char
         hl.FillTransparency = 0.72
         hl.OutlineTransparency = 0.25
@@ -912,7 +1178,8 @@ local function applyAura(char, on)
         auraChar = char
         auraParts = made
     else
-        for _, o in ipairs(made) do pcall(function() o:Destroy() end) end
+        for i = 1, #made do pcall(function() made[i]:Destroy() end) end
+        auraSpin = nil
     end
 end
 
@@ -925,19 +1192,18 @@ local function refreshAura()
 end
 
 task.spawn(function()
-    local last = os.clock()
+    local t = 0
     while true do
-        task.wait(0.08)
-        local now = os.clock()
-        local dt = now - last
-        last = now
+        local dt = task.wait(0.05)
+        t = t + dt
         if auraChar and not auraChar.Parent then clearAura() end
-        if AURA.on and auraChar and auraParts then
+        if AURA.on and auraChar and auraParts and auraSpin then
             if AURA.mode == "rainbow" then
                 AURA.hue = (AURA.hue + dt * 0.22 * AURA.speed) % 1
                 local c = rainbow(AURA.hue)
                 local seq = rainbowSeq(AURA.hue)
-                for _, o in ipairs(auraParts) do
+                for i = 1, #auraParts do
+                    local o = auraParts[i]
                     if o:IsA("Highlight") then
                         o.FillColor = c
                         o.OutlineColor = rainbow(AURA.hue + 0.5)
@@ -946,6 +1212,19 @@ task.spawn(function()
                     elseif o:IsA("ParticleEmitter") then
                         o.Color = seq
                     end
+                end
+            end
+            local ph = t * AURA.speed * 1.6
+            for i = 1, #auraSpin do
+                local s = auraSpin[i]
+                s.CFrame = CFrame.Angles(0, ph + (s:GetAttribute("Ph") or 0), 0)
+                    * CFrame.new(s:GetAttribute("R") or 1.5, s:GetAttribute("Y") or 0, 0)
+            end
+            local mod = 0.55 + 0.45 * math.sin(t * 5 * AURA.speed)
+            for i = 1, #auraParts do
+                local o = auraParts[i]
+                if o:IsA("ParticleEmitter") and o.Name:find("Pulse") then
+                    o.Rate = (o:GetAttribute("SleepRate") or 20) * mod
                 end
             end
         end
@@ -1189,7 +1468,7 @@ local function isEmitter(d)
 end
 
 local function isAuraFx(d)
-    return d:GetAttribute("VeniceAura") == true
+    return d:GetAttribute("SleepAura") == true
 end
 
 local function capture()
@@ -1250,7 +1529,8 @@ local function setPostFx(off)
             if d:IsA("PostEffect") then killFx(d) end
         end
     else
-        for _, d in ipairs(killedFx) do
+        for i = 1, #killedFx do
+            local d = killedFx[i]
             if d.Parent then pcall(function() d.Enabled = true end) end
         end
         table.clear(killedFx)
@@ -1278,7 +1558,8 @@ local function setParticles(off)
             end
         end)
     else
-        for _, d in ipairs(killedParts) do
+        for i = 1, #killedParts do
+            local d = killedParts[i]
             if d.Parent then pcall(function() d.Enabled = true end) end
         end
         table.clear(killedParts)
@@ -1323,10 +1604,12 @@ task.spawn(function()
     while true do
         task.wait(2)
         if FPS.boost then
-            for _, d in ipairs(killedParts) do
+            for i = 1, #killedParts do
+                local d = killedParts[i]
                 if d.Parent and d.Enabled then pcall(function() d.Enabled = false end) end
             end
-            for _, d in ipairs(killedFx) do
+            for i = 1, #killedFx do
+                local d = killedFx[i]
                 if d.Parent and d.Enabled then pcall(function() d.Enabled = false end) end
             end
         end
@@ -1338,41 +1621,48 @@ end)
 local function enforce()
     if not partsFolder or not partsFolder.Parent then pcall(getFolder) end
     local list = targets()
-    if #list == 0 then return end
+    local n = #list
 
-    for _, char in ipairs(list) do
-        if CONFIG.headless then pcall(applyHeadless, char, true) end
-        if CONFIG.korblox then
-            if not korbloxOk(char) then
-                local hum = char:FindFirstChildOfClass("Humanoid")
-                if hum and hum.RigType == Enum.HumanoidRigType.R6 and charMode[char] == "weld" then
-                    weldMode = true
+    if n > 0 and (CONFIG.headless or CONFIG.korblox) then
+        for i = 1, n do
+            local char = list[i]
+            if CONFIG.headless then pcall(applyHeadless, char, true) end
+            if CONFIG.korblox then
+                if not korbloxOk(char) then
+                    local hum = char:FindFirstChildOfClass("Humanoid")
+                    if hum and hum.RigType == Enum.HumanoidRigType.R6 and charMode[char] == "weld" then
+                        weldMode = true
+                    end
                 end
+                pcall(applyKorblox, char, true)
             end
-            pcall(applyKorblox, char, true)
         end
     end
 
-    local mine = LP.Character or myChar()
-    if mine and AURA.on then pcall(applyAura, mine, true) end
+    if n > 0 then pcall(cleanupParts, list) end
 
-    pcall(cleanupParts, list)
+    if AURA.on then
+        local mine = LP.Character or myChar()
+        if mine then pcall(applyAura, mine, true) end
+    end
 
-    if accCurrent ~= 0 and accState == "ready" and not hasAcc() and os.clock() - accMountAt > 0.4 then
-        accMountAt = os.clock()
-        pcall(mountAcc)
-    elseif accCurrent ~= 0 and accState == "failed" and os.clock() - accFailAt > 3 then
-        loadAccAsync(accCurrent)
+    if accCurrent ~= 0 then
+        if accState == "ready" and not hasAcc() and os.clock() - accMountAt > 0.4 then
+            accMountAt = os.clock()
+            pcall(mountAcc)
+        elseif accState == "failed" and os.clock() - accFailAt > 3 then
+            loadAccAsync(accCurrent)
+        end
     end
 
     pcall(applyFov)
-    pcall(syncSky)
+    if SKY.mode ~= "off" then pcall(syncSky) end
 end
 
 local acc = 0
 local BOUND = false
 pcall(function()
-    RunS:BindToRenderStep("VeniceEnforce", Enum.RenderPriority.Last.Value - 1, function(dt)
+    RunS:BindToRenderStep("SleepEnforce", Enum.RenderPriority.Last.Value - 1, function(dt)
         if CONFIG.force then
             enforce()
         else
@@ -1435,7 +1725,7 @@ local function watchChar(char)
 
     track(char.ChildAdded:Connect(function(d)
         if not CONFIG.korblox then return end
-        if d:IsA("CharacterMesh") and d.BodyPart == Enum.BodyPart.RightLeg and d.Name ~= "VeniceKorblox" then
+        if d:IsA("CharacterMesh") and d.BodyPart == Enum.BodyPart.RightLeg and d.Name ~= "SleepKorblox" then
             pcall(function() d:Destroy() end)
             task.defer(enforce)
         end
@@ -1443,7 +1733,7 @@ local function watchChar(char)
 
     track(char.ChildRemoved:Connect(function(d)
         if not CONFIG.korblox then return end
-        if d.Name == "VeniceKorblox" then
+        if d.Name == "SleepKorblox" then
             task.defer(enforce)
         elseif d:IsA("CharacterMesh") and d.BodyPart == Enum.BodyPart.RightLeg then
             task.defer(enforce)
@@ -1504,22 +1794,49 @@ end))
 
 -- ============================== меню ==============================
 
-local gui, panel, open = nil, nil, false
+local gui, panel, shellRef, open = nil, nil, nil, false
+local hudFrame, hudFps, hudPing
 local pages, tabBtns, activeTab = {}, {}, nil
-local setHeadless, setKorblox, setForce, setBoost, setInf, setAura, setNoClip
+local statusLabel, statusToken = nil, 0
+local setHeadless, setKorblox, setForce, setBoost, setInf, setAura, setNoClip, setHudRow
 
 local function tw(o, t, p) TweenS:Create(o, TweenInfo.new(t), p):Play() end
 
+local function status(text, color)
+    if not statusLabel then return end
+    statusToken = statusToken + 1
+    local token = statusToken
+    statusLabel.Text = text
+    statusLabel.TextColor3 = color or ACCENT
+    tw(statusLabel, 0.12, { TextTransparency = 0 })
+    task.delay(1.8, function()
+        if statusToken == token then tw(statusLabel, 0.5, { TextTransparency = 1 }) end
+    end)
+end
+
 local function section(text)
+    local f = Instance.new("Frame")
+    f.Size = UDim2.new(1, -8, 0, 18)
+    f.BackgroundTransparency = 1
+    f.Parent = panel
+
     local l = Instance.new("TextLabel")
-    l.Size = UDim2.new(1, -8, 0, 16)
+    l.Size = UDim2.new(0, 0, 1, 0)
+    l.AutomaticSize = Enum.AutomaticSize.X
     l.BackgroundTransparency = 1
     l.Font = Enum.Font.GothamBold
     l.TextSize = 9
     l.TextColor3 = SUB
     l.TextXAlignment = Enum.TextXAlignment.Left
-    l.Text = "  " .. text
-    l.Parent = panel
+    l.Text = text
+    l.Parent = f
+
+    local line = Instance.new("Frame")
+    line.Size = UDim2.new(1, -l.AbsoluteSize.X - 10, 0, 1)
+    line.Position = UDim2.new(0, l.AbsoluteSize.X + 8, 0.5, 0)
+    line.BackgroundColor3 = STROKE
+    line.BorderSizePixel = 0
+    line.Parent = f
 end
 
 local function row(text, default, cb, h)
@@ -1559,8 +1876,8 @@ local function row(text, default, cb, h)
 
     local state = default
     local function paint(v)
-        t.BackgroundColor3 = v and ACCENT or OFF
-        k.Position = v and UDim2.fromOffset(19, 3) or UDim2.fromOffset(3, 3)
+        tw(t, 0.14, { BackgroundColor3 = v and ACCENT or OFF })
+        tw(k, 0.14, { Position = v and UDim2.fromOffset(19, 3) or UDim2.fromOffset(3, 3) })
     end
 
     local btn = Instance.new("TextButton")
@@ -1573,6 +1890,8 @@ local function row(text, default, cb, h)
         paint(state)
         task.spawn(function() pcall(cb, state) end)
     end)
+    btn.MouseEnter:Connect(function() tw(r, 0.12, { BackgroundColor3 = ROW:Lerp(Color3.new(1, 1, 1), 0.07) }) end)
+    btn.MouseLeave:Connect(function() tw(r, 0.12, { BackgroundColor3 = ROW }) end)
 
     return function(v)
         state = v
@@ -1608,6 +1927,8 @@ local function button(text, cb, highlight)
         task.delay(0.25, function() tw(l, 0.2, { TextColor3 = highlight and ACCENT or TEXT }) end)
         task.spawn(function() pcall(cb) end)
     end)
+    btn.MouseEnter:Connect(function() tw(r, 0.12, { BackgroundColor3 = ROW:Lerp(Color3.new(1, 1, 1), 0.07) }) end)
+    btn.MouseLeave:Connect(function() tw(r, 0.12, { BackgroundColor3 = ROW }) end)
     return l
 end
 
@@ -1634,20 +1955,20 @@ local function chip(parent, text, cb, color)
         b.Text = "    " .. text
     end
     b.MouseButton1Click:Connect(function()
-        tw(b, 0.1, { BackgroundColor3 = ACCENT })
-        task.delay(0.2, function() tw(b, 0.2, { BackgroundColor3 = ROW }) end)
+        tw(b, 0.1, { BackgroundColor3 = ACCENT, TextColor3 = BG })
+        task.delay(0.22, function() tw(b, 0.22, { BackgroundColor3 = ROW, TextColor3 = TEXT }) end)
         task.spawn(function() pcall(cb) end)
     end)
     return b
 end
 
-local function gridBox(rows)
+local function gridBox(rows, cols)
     local f = Instance.new("Frame")
     f.Size = UDim2.new(1, -8, 0, rows * 30)
     f.BackgroundTransparency = 1
     f.Parent = panel
     local g = Instance.new("UIGridLayout", f)
-    g.CellSize = UDim2.new(0.25, -4, 0, 26)
+    g.CellSize = UDim2.new(1 / cols, -4, 0, 26)
     g.CellPadding = UDim2.fromOffset(4, 4)
     return f
 end
@@ -1725,15 +2046,16 @@ local function slider(text, min, max, default, cb, step, fmt)
 end
 
 local function setOpen(force)
-    if not panel then return end
+    if not shellRef then return end
     open = force ~= nil and force or not open
     if open then
-        panel.Visible = true
-        panel.BackgroundTransparency = 1
-        tw(panel, 0.2, { BackgroundTransparency = 0.05 })
+        shellRef.Visible = true
+        shellRef.BackgroundTransparency = 1
+        shellRef.Size = UDim2.fromOffset(480, 320)
+        tw(shellRef, 0.18, { BackgroundTransparency = 0.05, Size = UDim2.fromOffset(500, 360) })
     else
-        tw(panel, 0.15, { BackgroundTransparency = 1 })
-        task.delay(0.16, function() if not open and panel then panel.Visible = false end end)
+        tw(shellRef, 0.14, { BackgroundTransparency = 1, Size = UDim2.fromOffset(480, 320) })
+        task.delay(0.16, function() if not open and shellRef then shellRef.Visible = false end end)
     end
 end
 
@@ -1741,8 +2063,31 @@ local function setTab(id)
     activeTab = id
     for k, p in pairs(pages) do p.Visible = (k == id) end
     for k, b in pairs(tabBtns) do
-        b.BackgroundColor3 = (k == id) and ACCENT or ROW
-        b.TextColor3 = (k == id) and BG or SUB
+        if k == id then
+            tw(b, 0.15, { BackgroundColor3 = ACCENT, TextColor3 = BG })
+        else
+            tw(b, 0.15, { BackgroundColor3 = ROW, TextColor3 = SUB })
+        end
+    end
+end
+
+local function hudTone(v, good, mid)
+    if v == nil then return SUB end
+    if v >= good then return OKC end
+    if v >= mid then return WARN end
+    return BAD
+end
+
+local function setHud(on)
+    HUD.on = on
+    if not hudFrame then return end
+    if on then
+        hudFrame.Visible = true
+        hudFrame.BackgroundTransparency = 1
+        tw(hudFrame, 0.18, { BackgroundTransparency = 0.12 })
+    else
+        tw(hudFrame, 0.14, { BackgroundTransparency = 1 })
+        task.delay(0.15, function() if not HUD.on and hudFrame then hudFrame.Visible = false end end)
     end
 end
 
@@ -1757,56 +2102,247 @@ local TABS = {
     { id = "misc", label = "Прочее" },
 }
 
+local function buildHud()
+    local cam = WS.CurrentCamera
+    local vp = cam and cam.ViewportSize or Vector2.new(1280, 720)
+
+    hudFrame = Instance.new("Frame")
+    hudFrame.Size = UDim2.fromOffset(132, 58)
+    hudFrame.BackgroundColor3 = BG
+    hudFrame.BackgroundTransparency = 0.12
+    hudFrame.BorderSizePixel = 0
+    hudFrame.Visible = false
+    hudFrame.Parent = gui
+    Instance.new("UICorner", hudFrame).CornerRadius = UDim.new(0, 10)
+
+    local g = Instance.new("UIGradient")
+    g.Color = ColorSequence.new(Color3.fromRGB(20, 18, 28), Color3.fromRGB(10, 10, 14))
+    g.Rotation = 90
+    g.Parent = hudFrame
+
+    local st = Instance.new("UIStroke", hudFrame)
+    st.Thickness = 1
+    st.Transparency = 0.3
+    local sg = Instance.new("UIGradient")
+    sg.Color = ColorSequence.new(ACCENT, ACCENT2)
+    sg.Parent = st
+
+    local saved = getgenv().SleepHudPos
+    if saved then
+        hudFrame.Position = UDim2.fromOffset(saved.X, saved.Y)
+    else
+        hudFrame.Position = UDim2.fromOffset(vp.X - 152, 70)
+    end
+
+    local title = Instance.new("TextLabel")
+    title.Size = UDim2.new(1, -14, 0, 12)
+    title.Position = UDim2.fromOffset(8, 5)
+    title.BackgroundTransparency = 1
+    title.Font = Enum.Font.GothamBold
+    title.TextSize = 8
+    title.TextColor3 = SUB
+    title.TextXAlignment = Enum.TextXAlignment.Left
+    title.Text = "SLEEP · STATS"
+    title.Parent = hudFrame
+
+    local grip = Instance.new("TextLabel")
+    grip.Size = UDim2.fromOffset(20, 12)
+    grip.Position = UDim2.new(1, -24, 0, 5)
+    grip.BackgroundTransparency = 1
+    grip.Font = Enum.Font.GothamBold
+    grip.TextSize = 9
+    grip.TextColor3 = SUB
+    grip.Text = "⋮⋮"
+    grip.Parent = hudFrame
+
+    local function line(y, label)
+        local nl = Instance.new("TextLabel")
+        nl.Size = UDim2.fromOffset(48, 16)
+        nl.Position = UDim2.fromOffset(9, y)
+        nl.BackgroundTransparency = 1
+        nl.Font = Enum.Font.GothamBold
+        nl.TextSize = 9
+        nl.TextColor3 = SUB
+        nl.TextXAlignment = Enum.TextXAlignment.Left
+        nl.Text = label
+        nl.Parent = hudFrame
+
+        local nv = Instance.new("TextLabel")
+        nv.Size = UDim2.fromOffset(58, 16)
+        nv.Position = UDim2.new(1, -68, 0, y)
+        nv.BackgroundTransparency = 1
+        nv.Font = Enum.Font.GothamBlack
+        nv.TextSize = 12
+        nv.TextColor3 = TEXT
+        nv.TextXAlignment = Enum.TextXAlignment.Right
+        nv.Text = "--"
+        nv.Parent = hudFrame
+        return nv
+    end
+
+    hudFps = line(18, "FPS")
+    hudPing = line(35, "PING")
+
+    local hudDrag = false
+    local hudStart, hudStartPos
+    hudFrame.InputBegan:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+            hudDrag = true
+            hudStart = i.Position
+            hudStartPos = hudFrame.Position
+        end
+    end)
+    track(UIS.InputChanged:Connect(function(i)
+        if not hudDrag then return end
+        if i.UserInputType ~= Enum.UserInputType.MouseMovement and i.UserInputType ~= Enum.UserInputType.Touch then return end
+        local d = i.Position - hudStart
+        local c2 = WS.CurrentCamera
+        local size = c2 and c2.ViewportSize or Vector2.new(1280, 720)
+        local x = math.clamp(hudStartPos.X.Offset + d.X, 0, math.max(size.X - hudFrame.AbsoluteSize.X, 0))
+        local y = math.clamp(hudStartPos.Y.Offset + d.Y, 0, math.max(size.Y - hudFrame.AbsoluteSize.Y, 0))
+        hudFrame.Position = UDim2.fromOffset(x, y)
+    end))
+    track(UIS.InputEnded:Connect(function(i)
+        if i.UserInputType ~= Enum.UserInputType.MouseButton1 and i.UserInputType ~= Enum.UserInputType.Touch then return end
+        if hudDrag then
+            hudDrag = false
+            getgenv().SleepHudPos = Vector2.new(hudFrame.Position.X.Offset, hudFrame.Position.Y.Offset)
+        end
+    end))
+end
+
+local function hudLoop()
+    local frames = 0
+    track(RunS.RenderStepped:Connect(function() frames = frames + 1 end))
+    local lastT = os.clock()
+    while true do
+        task.wait(0.5)
+        local now = os.clock()
+        local span = now - lastT
+        lastT = now
+        if HUD.on and hudFps and hudPing then
+            local fps = span > 0 and math.floor(frames / span + 0.5) or 0
+            frames = 0
+            local ping
+            local ok, v = pcall(function()
+                return Stats.Network.ServerStatsItem["Data Ping"]:GetValue()
+            end)
+            if ok and type(v) == "number" then ping = math.floor(v + 0.5) end
+
+            hudFps.Text = tostring(fps)
+            hudFps.TextColor3 = hudTone(fps, 50, 28)
+            hudPing.Text = ping and tostring(ping) or "--"
+            hudPing.TextColor3 = ping and hudTone(1000 - ping * 5, 700, 400) or SUB
+            if ping then
+                if ping <= 80 then hudPing.TextColor3 = OKC
+                elseif ping <= 160 then hudPing.TextColor3 = WARN
+                else hudPing.TextColor3 = BAD end
+            end
+        else
+            frames = 0
+        end
+    end
+end
+
 local function build()
     gui = Instance.new("ScreenGui")
-    gui.Name = "VeniceCos"
+    gui.Name = "Sleepscript"
     gui.ResetOnSpawn = false
     gui.IgnoreGuiInset = true
     gui.DisplayOrder = 1000000
     gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-    getgenv().VeniceCos = gui
+    getgenv().Sleepscript = gui
     if not stealthGui(gui) then gui.Parent = LP:WaitForChild("PlayerGui") end
 
     local shell = Instance.new("Frame")
     shell.Position = UDim2.fromOffset(20, 70)
-    shell.Size = UDim2.fromOffset(480, 330)
+    shell.Size = UDim2.fromOffset(500, 360)
     shell.BackgroundColor3 = BG
     shell.BackgroundTransparency = 0.05
     shell.BorderSizePixel = 0
     shell.Visible = false
     shell.Parent = gui
-    Instance.new("UICorner", shell).CornerRadius = UDim.new(0, 12)
+    shellRef = shell
+    Instance.new("UICorner", shell).CornerRadius = UDim.new(0, 14)
+
+    local bg = Instance.new("UIGradient")
+    bg.Color = ColorSequence.new(Color3.fromRGB(22, 20, 32), Color3.fromRGB(9, 9, 12))
+    bg.Rotation = 90
+    bg.Parent = shell
+
     local st = Instance.new("UIStroke", shell)
-    st.Color = STROKE
-    st.Transparency = 0.3
+    st.Thickness = 1
+    st.Transparency = 0.25
+    local stg = Instance.new("UIGradient")
+    stg.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, ACCENT),
+        ColorSequenceKeypoint.new(0.5, STROKE),
+        ColorSequenceKeypoint.new(1, ACCENT2),
+    })
+    stg.Parent = st
 
     local head = Instance.new("Frame")
-    head.Size = UDim2.new(1, 0, 0, 30)
+    head.Size = UDim2.new(1, 0, 0, 42)
     head.BackgroundTransparency = 1
     head.Parent = shell
 
     local dot = Instance.new("Frame")
-    dot.Size = UDim2.fromOffset(6, 6)
-    dot.Position = UDim2.fromOffset(13, 12)
+    dot.Size = UDim2.fromOffset(8, 8)
+    dot.Position = UDim2.fromOffset(16, 17)
     dot.BackgroundColor3 = ACCENT
     dot.BorderSizePixel = 0
     dot.Parent = head
     Instance.new("UICorner", dot).CornerRadius = UDim.new(1, 0)
+    task.spawn(function()
+        while dot.Parent do
+            tw(dot, 0.9, { BackgroundTransparency = 0.55 })
+            task.wait(0.95)
+            tw(dot, 0.9, { BackgroundTransparency = 0 })
+            task.wait(0.95)
+        end
+    end)
 
     local title = Instance.new("TextLabel")
-    title.Size = UDim2.new(1, -34, 0, 13)
-    title.Position = UDim2.fromOffset(25, 8)
+    title.Size = UDim2.new(1, -80, 0, 14)
+    title.Position = UDim2.fromOffset(30, 10)
     title.BackgroundTransparency = 1
-    title.Font = Enum.Font.GothamBold
-    title.TextSize = 11
+    title.Font = Enum.Font.GothamBlack
+    title.TextSize = 13
     title.TextColor3 = TEXT
     title.TextXAlignment = Enum.TextXAlignment.Left
-    title.Text = "VENICE · COSMETICS"
+    title.Text = "SLEEPSCRIPT"
     title.Parent = head
+
+    local sub = Instance.new("TextLabel")
+    sub.Size = UDim2.new(1, -80, 0, 12)
+    sub.Position = UDim2.fromOffset(31, 24)
+    sub.BackgroundTransparency = 1
+    sub.Font = Enum.Font.GothamMedium
+    sub.TextSize = 9
+    sub.TextColor3 = SUB
+    sub.TextXAlignment = Enum.TextXAlignment.Left
+    sub.Text = "cosmetics · qol"
+    sub.Parent = head
+
+    local close = Instance.new("TextButton")
+    close.Size = UDim2.fromOffset(22, 22)
+    close.Position = UDim2.new(1, -30, 0, 10)
+    close.BackgroundColor3 = ROW
+    close.BorderSizePixel = 0
+    close.AutoButtonColor = false
+    close.Font = Enum.Font.GothamBold
+    close.TextSize = 13
+    close.TextColor3 = SUB
+    close.Text = "×"
+    close.Parent = head
+    Instance.new("UICorner", close).CornerRadius = UDim.new(0, 6)
+    close.MouseButton1Click:Connect(function() setOpen(false) end)
+    close.MouseEnter:Connect(function() tw(close, 0.12, { BackgroundColor3 = ACCENT, TextColor3 = BG }) end)
+    close.MouseLeave:Connect(function() tw(close, 0.12, { BackgroundColor3 = ROW, TextColor3 = SUB }) end)
 
     local bar = Instance.new("Frame")
     bar.Size = UDim2.new(1, -8, 0, 24)
-    bar.Position = UDim2.fromOffset(4, 32)
+    bar.Position = UDim2.fromOffset(4, 44)
     bar.BackgroundTransparency = 1
     bar.Parent = shell
     local bl = Instance.new("UIListLayout", bar)
@@ -1816,7 +2352,7 @@ local function build()
 
     for i, t in ipairs(TABS) do
         local b = Instance.new("TextButton")
-        b.Size = UDim2.fromOffset(52, 22)
+        b.Size = UDim2.fromOffset(56, 22)
         b.LayoutOrder = i
         b.BackgroundColor3 = ROW
         b.BorderSizePixel = 0
@@ -1831,8 +2367,8 @@ local function build()
         b.MouseButton1Click:Connect(function() setTab(t.id) end)
 
         local p = Instance.new("ScrollingFrame")
-        p.Size = UDim2.new(1, -8, 1, -66)
-        p.Position = UDim2.fromOffset(4, 62)
+        p.Size = UDim2.new(1, -8, 1, -92)
+        p.Position = UDim2.fromOffset(4, 72)
         p.BackgroundTransparency = 1
         p.BorderSizePixel = 0
         p.ScrollBarThickness = 2
@@ -1846,24 +2382,64 @@ local function build()
         pages[t.id] = p
     end
 
+    local foot = Instance.new("Frame")
+    foot.Size = UDim2.new(1, -8, 0, 14)
+    foot.Position = UDim2.new(0, 4, 1, -18)
+    foot.BackgroundTransparency = 1
+    foot.Parent = shell
+
+    statusLabel = Instance.new("TextLabel")
+    statusLabel.Size = UDim2.new(1, -70, 1, 0)
+    statusLabel.Position = UDim2.fromOffset(6, 0)
+    statusLabel.BackgroundTransparency = 1
+    statusLabel.Font = Enum.Font.GothamBold
+    statusLabel.TextSize = 9
+    statusLabel.TextColor3 = ACCENT
+    statusLabel.TextXAlignment = Enum.TextXAlignment.Left
+    statusLabel.TextTransparency = 1
+    statusLabel.Text = ""
+    statusLabel.Parent = foot
+
+    local hint = Instance.new("TextLabel")
+    hint.Size = UDim2.fromOffset(64, 14)
+    hint.Position = UDim2.new(1, -70, 0, 0)
+    hint.BackgroundTransparency = 1
+    hint.Font = Enum.Font.GothamBold
+    hint.TextSize = 9
+    hint.TextColor3 = SUB
+    hint.TextXAlignment = Enum.TextXAlignment.Right
+    hint.Text = "Z · меню"
+    hint.Parent = foot
+
     panel = pages.look
     section("ВНЕШКА")
     setHeadless = row("Headless", CONFIG.headless, function(v)
         CONFIG.headless = v
-        for _, c in ipairs(targets()) do pcall(applyHeadless, c, v) end
+        if v and not CONFIG.force and setForce then setForce(true) end
+        for i = 1, #targets() do
+            local c = tmpList[i]
+            pcall(applyHeadless, c, v)
+        end
+        status(v and "headless включён" or "headless выключен")
     end)
     setKorblox = row("Korblox", CONFIG.korblox, function(v)
         CONFIG.korblox = v
-        for _, c in ipairs(targets()) do pcall(applyKorblox, c, v) end
+        if v and not CONFIG.force and setForce then setForce(true) end
+        for i = 1, #targets() do
+            local c = tmpList[i]
+            pcall(applyKorblox, c, v)
+        end
+        status(v and "korblox включён" or "korblox выключен")
     end)
     setForce = row("Жёсткая фиксация", CONFIG.force, function(v)
         CONFIG.force = v
         enforce()
+        status(v and "фиксация: жёсткая" or "фиксация: мягкая")
     end, 26)
 
     panel = pages.aura
     section("ЦВЕТ")
-    local cg = gridBox(2)
+    local cg = gridBox(6, 4)
     for _, c in ipairs(AURA_COLORS) do
         chip(cg, c.name, function()
             if c.mode == "rainbow" then
@@ -1873,14 +2449,16 @@ local function build()
                 AURA.color = c.color
             end
             if AURA.on then refreshAura() end
+            status("цвет: " .. c.name)
         end, c.color)
     end
     section("СТИЛЬ")
-    local sg = gridBox(1)
+    local sg = gridBox(4, 3)
     for _, s in ipairs(AURA_STYLES) do
         chip(sg, s.name, function()
             AURA.style = s.id
             if AURA.on then refreshAura() end
+            status("стиль: " .. s.name)
         end)
     end
     section("ПАРАМЕТРЫ")
@@ -1889,8 +2467,10 @@ local function build()
         if v then
             local c = myChar()
             if c then pcall(applyAura, c, true) end
+            status("аура включена")
         else
             clearAura()
+            status("аура выключена")
         end
     end)
     slider("Размер", 0.3, 2.5, AURA.size, function(v)
@@ -1900,32 +2480,30 @@ local function build()
     slider("Скорость цвета", 0.1, 3, AURA.speed, function(v)
         AURA.speed = v
     end, 0.1, function(v) return string.format("%.1f", v) end)
-    button("Убрать ауру", function()
-        if setAura then setAura(false) end
-    end)
 
     panel = pages.head
     section("АКСЕССУАРЫ")
     for _, a in ipairs(ACCS) do
-        button(a.name, function() setAcc(a.id) end)
+        button(a.name, function()
+            setAcc(a.id)
+            status("аксессуар: " .. a.name)
+        end)
     end
-    button("Снять", function() setAcc(0) end)
+    button("Снять", function()
+        setAcc(0)
+        status("аксессуар снят")
+    end)
     slider("Смещение", -0.6, 1.2, accOffsetY, function(v)
         accOffsetY = v
         if accCurrent ~= 0 then reAcc() end
     end, 0.05)
-    button("Вернуть голову", function()
-        CONFIG.headless = false
-        if setHeadless then setHeadless(false) end
-        for _, c in ipairs(targets()) do pcall(applyHeadless, c, false) end
-        enforce()
-    end)
 
     panel = pages.move
     section("ПРЫЖОК")
     setInf = row("Бесконечный прыжок", CONFIG.infJump, function(v)
         CONFIG.infJump = v
         airJumps = 0
+        status(v and "прыжок: ∞" or "прыжок: обычный")
     end)
     slider("Прыжков в воздухе", -1, 10, CONFIG.jumpLimit, function(v)
         CONFIG.jumpLimit = v
@@ -1950,18 +2528,18 @@ local function build()
     grid.CellSize = UDim2.new(0.333, -4, 0, 26)
     grid.CellPadding = UDim2.fromOffset(4, 4)
     panel = skyPage
-    button("Выкл", function() applySky("off") end)
-    button("Ночь", function() applySky("night") end)
-    button("Космос", function() applySky("space") end)
-    button("Закат", function() applySky("sunset") end)
-    button("Сумерки", function() applySky("dusk") end)
-    button("Классика", function() applySky("classic") end)
-    button("Пасмурно", function() applySky("overcast") end)
-    button("Пустота", function() applySky("void") end)
-    button("Инферно", function() applySky("inferno") end)
-    button("Лёд", function() applySky("ice") end)
-    button("Матрица", function() applySky("matrix") end)
-    button("Кровь", function() applySky("blood") end)
+    button("Выкл", function() applySky("off") status("небо: выкл") end)
+    button("Ночь", function() applySky("night") status("небо: ночь") end)
+    button("Космос", function() applySky("space") status("небо: космос") end)
+    button("Закат", function() applySky("sunset") status("небо: закат") end)
+    button("Сумерки", function() applySky("dusk") status("небо: сумерки") end)
+    button("Классика", function() applySky("classic") status("небо: классика") end)
+    button("Пасмурно", function() applySky("overcast") status("небо: пасмурно") end)
+    button("Пустота", function() applySky("void") status("небо: пустота") end)
+    button("Инферно", function() applySky("inferno") status("небо: инферно") end)
+    button("Лёд", function() applySky("ice") status("небо: лёд") end)
+    button("Матрица", function() applySky("matrix") status("небо: матрица") end)
+    button("Кровь", function() applySky("blood") status("небо: кровь") end)
 
     panel = pages.fps
     section("FPS")
@@ -1969,6 +2547,7 @@ local function build()
         FPS.boost = v
         if v then FPS.shadowsOff, FPS.fxOff, FPS.partsOff = true, true, true end
         syncFps()
+        status(v and "boost включён" or "boost выключен")
     end)
     row("Тени off", FPS.shadowsOff, function(v)
         FPS.shadowsOff = v
@@ -1988,26 +2567,47 @@ local function build()
     end, 5)
 
     panel = pages.misc
+    section("HUD")
+    setHudRow = row("Счётчик FPS и пинга", HUD.on, function(v)
+        setHud(v)
+        status(v and "HUD включён" or "HUD выключен")
+    end)
+    button("Сбросить позицию HUD", function()
+        getgenv().SleepHudPos = nil
+        if hudFrame then
+            local cam = WS.CurrentCamera
+            local vp = cam and cam.ViewportSize or Vector2.new(1280, 720)
+            tw(hudFrame, 0.18, { Position = UDim2.fromOffset(vp.X - 152, 70) })
+        end
+        status("позиция HUD сброшена")
+    end)
     section("КОЛЛИЗИИ")
     setNoClip = row("Ноклип", CONFIG.noclip, function(v)
         CONFIG.noclip = v
         local mine = LP.Character or myChar()
         pcall(setNoClip, v and mine or nil, v)
+        status(v and "ноклип включён" or "ноклип выключен")
     end)
     section("ЗАЩИТА")
     row("Иммунитет к урону и чекпоинтам", PROTECT.parts, function(v)
         PROTECT.parts = v
         if v then scanHazards() else clearHazards() end
+        status(v and "иммунитет включён" or "иммунитет выключен")
     end)
     row("Держать здоровье", PROTECT.godHealth, function(v)
         PROTECT.godHealth = v
         if v then healNow() end
+        status(v and "здоровье зафиксировано" or "здоровье свободно")
     end, 26)
-    button("Просканировать опасные части", function() scanHazards() end)
+    button("Просканировать опасные части", function()
+        scanHazards()
+        status("скан выполнен")
+    end)
     section("ПРОЧЕЕ")
     button("Аксессуар заново", function()
         if accCurrent == 0 then accCurrent = ACCS[1].id end
         reAcc()
+        status("аксессуар переустановлен")
     end)
     button("Переприменить", function()
         CONFIG.headless, CONFIG.korblox, CONFIG.force = true, true, true
@@ -2026,24 +2626,26 @@ local function build()
             task.wait(0.15)
             enforce()
         end
-        print("[Venice] переприменено")
+        status("всё переприменено", OKC)
+        print("[Sleep] переприменено")
     end, true)
     button("Диагностика", function()
         local list = targets()
-        print("[Venice] целей найдено:", #list)
-        print("[Venice] LP.Character:", tostring(LP.Character))
+        print("[Sleep] целей найдено:", #list)
+        print("[Sleep] LP.Character:", tostring(LP.Character))
         local char = list[1]
         local hum = char and char:FindFirstChildOfClass("Humanoid")
-        print("[Venice] риг:", hum and hum.RigType.Name or "нет")
-        print("[Venice] weld-режим:", tostring(weldMode), "попыток меша:", char and tostring(cmTries[char]) or "-")
-        print("[Venice] CreateMeshPartAsync:", meshCache and "ок" or "недоступен")
-        print("[Venice] аура:", tostring(AURA.on), "режим:", AURA.mode, "стиль:", AURA.style, "цель:", auraChar and "есть" or "нет")
-        print("[Venice] аксессуар:", accCurrent, "| состояние:", accState, "| кэш:", accTemplate and "есть" or "нет", "| на голове:", tostring(hasAcc()), "| статус:", accLast)
-        print("[Venice] защита частей:", tostring(PROTECT.parts), "здоровье:", tostring(PROTECT.godHealth))
-        print("[Venice] ноклип:", tostring(CONFIG.noclip), "частей под ноклипом:", #noclipSaved)
-        print("[Venice] частей в папке:", partsFolder and #partsFolder:GetChildren() or 0)
-        print("[Venice] fps:", tostring(FPS.boost), "частиц убито:", #killedParts, "эффектов:", #killedFx)
-        print("[Venice] FOV:", tostring(fovTarget), "небо:", SKY.mode)
+        print("[Sleep] риг:", hum and hum.RigType.Name or "нет")
+        print("[Sleep] weld-режим:", tostring(weldMode), "попыток меша:", char and tostring(cmTries[char]) or "-")
+        print("[Sleep] CreateMeshPartAsync:", meshCache and "ок" or "недоступен")
+        print("[Sleep] аура:", tostring(AURA.on), "режим:", AURA.mode, "стиль:", AURA.style, "цель:", auraChar and "есть" or "нет")
+        print("[Sleep] аксессуар:", accCurrent, "| состояние:", accState, "| кэш:", accTemplate and "есть" or "нет", "| на голове:", tostring(hasAcc()), "| статус:", accLast)
+        print("[Sleep] защита частей:", tostring(PROTECT.parts), "здоровье:", tostring(PROTECT.godHealth))
+        print("[Sleep] ноклип:", tostring(CONFIG.noclip), "частей под ноклипом:", #noclipSaved)
+        print("[Sleep] частей в папке:", partsFolder and #partsFolder:GetChildren() or 0)
+        print("[Sleep] fps:", tostring(FPS.boost), "частиц убито:", #killedParts, "эффектов:", #killedFx)
+        print("[Sleep] FOV:", tostring(fovTarget), "небо:", SKY.mode, "HUD:", tostring(HUD.on))
+        status("диагностика в консоли")
     end)
     button("Убрать всё", function()
         CONFIG.headless, CONFIG.korblox, CONFIG.force = false, false, false
@@ -2063,22 +2665,27 @@ local function build()
         if setInf then setInf(false) end
         if setAura then setAura(false) end
         if setNoClip then setNoClip(false) end
+        if setHudRow then setHudRow(false) end
         pcall(restoreNoclip)
         pcall(clearHazards)
         syncFps()
-        for _, c in ipairs(targets()) do
-            pcall(applyHeadless, c, false)
-            pcall(clearKorblox, c)
+        local list = targets()
+        for i = 1, #list do
+            pcall(applyHeadless, list[i], false)
+            pcall(clearKorblox, list[i])
         end
         pcall(clearAura)
         pcall(clearAcc)
         pcall(applySky, "off")
         fovTarget = 70
         pcall(applyFov)
+        status("всё выключено", OKC)
     end)
 
     panel = shell
     setTab("look")
+
+    buildHud()
 
     local drag, ds, sp
     head.InputBegan:Connect(function(i)
@@ -2099,8 +2706,9 @@ local function build()
     end))
 
     gui.Destroying:Connect(function()
-        pcall(function() RunS:UnbindFromRenderStep("VeniceEnforce") end)
-        pcall(function() CAS:UnbindAction("VeniceMenu") end)
+        pcall(function() RunS:UnbindFromRenderStep("SleepEnforce") end)
+        pcall(function() CAS:UnbindAction("SleepMenu") end)
+        pcall(function() CAS:UnbindAction("SleepHud") end)
         pcall(clearAura)
         pcall(restoreNoclip)
         if partsFolder then
@@ -2108,13 +2716,14 @@ local function build()
         end
     end)
 
-    print("[Venice] v41 · Z меню")
+    print("[Sleep] v1 · Z меню · H HUD · всё выключено")
 end
 
 build()
+task.spawn(hudLoop)
 
 pcall(function()
-    CAS:BindActionAtPriority("VeniceMenu", function(_, state, input)
+    CAS:BindActionAtPriority("SleepMenu", function(_, state, input)
         if state ~= Enum.UserInputState.Begin then return Enum.ContextActionResult.Pass end
         if UIS:GetFocusedTextBox() then return Enum.ContextActionResult.Pass end
         if input.KeyCode == Enum.KeyCode.Z then
@@ -2123,6 +2732,18 @@ pcall(function()
         end
         return Enum.ContextActionResult.Pass
     end, false, Enum.ContextActionPriority.High.Value, Enum.KeyCode.Z)
+end)
+
+pcall(function()
+    CAS:BindActionAtPriority("SleepHud", function(_, state, input)
+        if state ~= Enum.UserInputState.Begin then return Enum.ContextActionResult.Pass end
+        if UIS:GetFocusedTextBox() then return Enum.ContextActionResult.Pass end
+        if input.KeyCode == Enum.KeyCode.H then
+            if setHudRow then setHudRow(not HUD.on) else setHud(not HUD.on) end
+            return Enum.ContextActionResult.Sink
+        end
+        return Enum.ContextActionResult.Pass
+    end, false, Enum.ContextActionPriority.High.Value, Enum.KeyCode.H)
 end)
 
 track(UIS.InputBegan:Connect(function(input, gp)
